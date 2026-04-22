@@ -19,7 +19,7 @@ static const struct pci_device_id edu_pci_ids[] = {
 
 MODULE_DEVICE_TABLE(pci, edu_pci_ids);
 
-struct edu_dev edu_dev;
+struct qemuedu_pci_device edu_dev;
 
 // 2. Probe and remove
 static int edu_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
@@ -55,6 +55,8 @@ static int edu_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 
 	void *__iomem bar_base;
 	bar_base = pci_iomap(pdev, 0, 0);
+	// FIXME: should be: bar_base = pci_iomap(pdev, 0, 4096);
+
 	if (!bar_base) {
 		ret = -ENOMEM;
 		goto error_release_region;
@@ -88,7 +90,7 @@ error_disable_device:
 
 static void edu_remove(struct pci_dev *pdev) {
 	pr_info("edu: remove called\n");
-	struct edu_dev *edev = pci_get_drvdata(pdev);
+	struct qemuedu_pci_device *edev = pci_get_drvdata(pdev);
 
 	if (edev && edev->base)
 		pci_iounmap(pdev, edev->base);
@@ -98,7 +100,7 @@ static void edu_remove(struct pci_dev *pdev) {
 	pci_disable_device(pdev);
 }
 
-static inline bool is_computing_factorial(struct edu_dev *edev) {
+static inline bool is_computing_factorial(struct qemuedu_pci_device *edev) {
 	return edu_hw_read(edev, EDU_REG_STATUS) & EDU_STATUS_COMPUTING;
 }
 
@@ -106,7 +108,7 @@ irqreturn_t edu_irq_handler(int irq, void *dev_id) {
 	pr_info(PCI_DEVICE_NAME ": Received interrupt");
 
 	struct pci_dev *pdev = dev_id;
-	struct edu_dev *edev = pci_get_drvdata(pdev);
+	struct qemuedu_pci_device *edev = pci_get_drvdata(pdev);
 
 	if (!edev)
 		return IRQ_NONE;

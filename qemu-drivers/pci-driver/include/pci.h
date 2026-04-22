@@ -22,7 +22,7 @@
 #define EDU_STATUS_COMPUTING 0x1
 #define EDU_STATUS_RAISEIRQ 0x80
 
-struct edu_dev {
+struct qemuedu_pci_device {
 	struct pci_dev *pdev;
 	void __iomem *base;
 
@@ -34,15 +34,15 @@ struct edu_dev {
 };
 
 // public functions for use to implement userspace API
-static inline u32 edu_hw_read(struct edu_dev *edu_dev, u32 reg) {
+static inline u32 edu_hw_read(struct qemuedu_pci_device *edu_dev, u32 reg) {
 	return ioread32(edu_dev->base + reg);
 }
-static inline void edu_hw_write(struct edu_dev *edu_dev, u32 reg, u32 val) {
+static inline void edu_hw_write(struct qemuedu_pci_device *edu_dev, u32 reg, u32 val) {
 	iowrite32(val, edu_dev->base);
 }
 
 extern irqreturn_t edu_irq_handler(int irq, void *dev_id);
 
 extern struct pci_driver edu_driver;
-extern struct edu_dev edu_dev;
-extern struct edu_dev irq_dev;
+extern struct qemuedu_pci_device edu_dev;
+extern struct qemuedu_pci_device irq_dev;

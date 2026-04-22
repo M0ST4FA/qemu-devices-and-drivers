@@ -2,9 +2,9 @@
 #include "asm-generic/barrier.h"
 #include "asm-generic/int-ll64.h"
 #include "asm-generic/rwonce.h"
-#include "asm/io.h"
 #include "asm/uaccess.h"
-#include "asm/vdso/processor.h"
+#include "linux/cdev.h"
+#include "linux/device.h"
 #include "linux/device/class.h"
 #include "linux/fs.h"
 #include "linux/printk.h"
@@ -26,6 +26,7 @@ struct file_operations fops = {
 };
 int major;
 struct class *class;
+struct qemuedu_device edu_char_dev;
 
 int edu_open(struct inode *inode, struct file *filp) {
 	pr_info(DEVICE_NAME ": opened character device for edu-pci");
@@ -39,7 +40,7 @@ int edu_release(struct inode *inode, struct file *filp) {
 	return 0;
 };
 
-static inline bool is_computing_factorial(struct edu_dev *edev) {
+static inline bool is_computing_factorial(struct qemuedu_pci_device *edev) {
 	return edu_hw_read(edev, EDU_REG_STATUS) & EDU_STATUS_COMPUTING;
 }
 
@@ -48,7 +49,7 @@ ssize_t edu_read(struct file *filp, char __user *user_buf, size_t user_len, loff
 		return 0; // EOF
 
 	u32 res = 0;
-	struct edu_dev *edev = filp->private_data;
+	struct qemuedu_pci_device *edev = filp->private_data;
 	pr_info(DEVICE_NAME ": edev address %p", edev);
 	char buf[BUF_SIZE] = {0};
 	ssize_t ret;
@@ -94,7 +95,7 @@ ssize_t edu_read(struct file *filp, char __user *user_buf, size_t user_len, loff
 };
 ssize_t edu_write(struct file *filp, const char __user *user_buf, size_t user_len, loff_t *user_off) {
 
-	struct edu_dev *edev = filp->private_data;
+	struct qemuedu_pci_device *edev = filp->private_data;
 	u32 number;
 	ssize_t ret = 0, n = user_len < BUF_SIZE - 1 ? user_len : BUF_SIZE - 1; // cap copied amount to BUF_SIZE
 	char buf[BUF_SIZE] = {0};
@@ -133,12 +134,12 @@ ssize_t edu_write(struct file *filp, const char __user *user_buf, size_t user_le
 	return n;
 };
 
-static ssize_t ioctl_ident(struct edu_dev *edev, u32 __user *arg) {
+static ssize_t ioctl_ident(struct qemuedu_pci_device *edev, u32 __user *arg) {
 	u32 val = readl(edev->base + EDU_REG_IDENT);
 	return put_user(val, arg);
 }
 
-static ssize_t ioctl_liveness(struct edu_dev *edev, u32 __user *arg) {
+static ssize_t ioctl_liveness(struct qemuedu_pci_device *edev, u32 __user *arg) {
 	u32 challange;
 
 	// 1. Get challange from user
@@ -155,7 +156,7 @@ static ssize_t ioctl_liveness(struct edu_dev *edev, u32 __user *arg) {
 }
 
 ssize_t edu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
-	struct edu_dev *edev = filp->private_data;
+	struct qemuedu_pci_device *edev = filp->private_data;
 
 	switch (cmd) {
 		case EDU_IOCTL_IDENT:
@@ -165,4 +166,25 @@ ssize_t edu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 		default:
 			return -ENOTTY;
 	}
+};
+
+int edu_char_dev_init(struct qemuedu_device *dev, dev_t dev_id) {
+	int ret = 0;
+
+	cdev_init(&dev->char_device, &fops);
+	ret = cdev_add(&dev->char_device, dev_id, 1);
+	if (ret < 0) {
+		pr_alert(DEVICE_NAME ": failed to add character device");
+		return ret;
+	}
+	dev->device = device_create(class, NULL, dev_id, 0, "%s-polling", DEVICE_NAME);
+	if (dev->device == NULL) {
+		pr_alert(DEVICE_NAME ": failed to create device model device");
+		cdev_del(&dev->char_device);
+	}
+
+	return 0;
+};
+void edu_char_dev_destroy(struct qemuedu_device *dev) {
+	cdev_del(&dev->char_device);
 };

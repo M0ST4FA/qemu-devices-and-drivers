@@ -1,4 +1,4 @@
 obj-m := math-accel.o
 
 ccflags-y := -I ${src}/include
-edu-pci-y := main.o
+math-accel-y := main.o pci.o char.o

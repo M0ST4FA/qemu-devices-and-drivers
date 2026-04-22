@@ -1,0 +1,6 @@
+[submodule "qemu-devices/libvfio-user"]
+	path = qemu-devices/libvfio-user
+	url = https://github.com/nutanix/libvfio-user
+[submodule "qemu-drivers/qemu-edu-driver"]
+	path = qemu-drivers/qemu-edu-driver
+	url = https://github.com/maxerenberg/qemu-edu-driver

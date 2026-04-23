@@ -1,4 +1,5 @@
 #include "libvfio-user.h"
+#include <asm-generic/errno.h>
 #include <err.h>
 #include <errno.h>
 #include <linux/pci_regs.h>
@@ -7,6 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#define RECONNECT_MAX 5
+
+static void print_usage_exit(const char *prog_name) {
+	printf("Usage: %s <unix_socket_path>\n", prog_name);
+	exit(EXIT_FAILURE);
+}
 
 struct math_device_state {
 	uint32_t data;
@@ -97,19 +105,24 @@ error:
 	return -1;
 };
 
-int main() {
-	int ret;
+int main(int argc, char *argv[]) {
+	int ret, conn_tries;
 	struct math_device_state state = {0, 0, 0};
 
-	if (access("/tmp/math-accel.sock", F_OK) == 0) {
+	if (argc != 2)
+		print_usage_exit(argv[0]);
+
+	const char *socket_path = argv[1];
+
+	if (access(socket_path, F_OK) == 0) {
 		printf("Socket already exists...removing it\n");
-		if (unlink("/tmp/math-accel.sock") < 0)
+		if (unlink(socket_path) < 0)
 			err(EXIT_FAILURE, "unlink: %s\n", strerror(errno));
 	}
 
 	// 1. Create the VFIO context and the UNIX socket
-	printf("[HW] Initializing math-accel on /tmp/math-accel.sock\n");
-	vfu_ctx_t *vfu_ctx = vfu_create_ctx(VFU_TRANS_SOCK, "/tmp/math-accel.sock", 0, &state, VFU_DEV_TYPE_PCI);
+	printf("[HW] Initializing math-accel on %s\n", socket_path);
+	vfu_ctx_t *vfu_ctx = vfu_create_ctx(VFU_TRANS_SOCK, socket_path, 0, &state, VFU_DEV_TYPE_PCI);
 	if (vfu_ctx == NULL) {
 		if (errno == EINTR) {
 			err(EXIT_FAILURE, "%s\n", "Interrupted");
@@ -143,6 +156,13 @@ int main() {
 	ret = vfu_realize_ctx(vfu_ctx);
 
 	// 6. Wait for QEMU to connect
+	conn_tries = 0;
+	// Connection loop; can be turned into a while loop but I'm too lazy
+connect:
+	conn_tries += 1;
+	if (conn_tries >= RECONNECT_MAX)
+		err(EXIT_FAILURE, "Maximum number of reconnections (%d) reached", RECONNECT_MAX);
+
 	printf("[HW] Waiting for QEMU to plug in the device...\n");
 	ret = vfu_attach_ctx(vfu_ctx);
 	if (ret < 0)
@@ -152,8 +172,13 @@ int main() {
 
 	// 7. The main hardware loop
 	ret = vfu_run_ctx(vfu_ctx);
-	if (ret == -1)
-		err(EXIT_FAILURE, "%s\n", "vfu_run_ctx failed");
+	if (ret < 0) {
+		if (errno == ENOTCONN) // Client closed the connection
+			goto connect;	   // Try to reconnect again; alternatively, you can ctrl+C (SIGINT) the program and reexec it
+
+		vfu_destroy_ctx(vfu_ctx);
+		err(EXIT_FAILURE, "%s: %s\n", "vfu_run_ctx", strerror(errno));
+	}
 
 	vfu_destroy_ctx(vfu_ctx);
 

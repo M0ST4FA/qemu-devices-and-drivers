@@ -4,6 +4,7 @@
 #include "asm-generic/rwonce.h"
 #include "asm/uaccess.h"
 #include "common.h"
+#include "edu.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
 #include "linux/device.h"

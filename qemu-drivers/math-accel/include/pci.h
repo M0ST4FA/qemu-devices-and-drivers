@@ -21,6 +21,8 @@ struct mathaccel_device {
 	void *__iomem bar[1];
 	struct cdev cdev;
 	int minor;
+	char name[64];
 };
 
 extern struct mathaccel_device mathaccel_dev[MATHACCEL_DEV_NR];
+extern struct kmem_cache *mathaccel_cache;

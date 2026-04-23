@@ -46,7 +46,10 @@ qemu-system-x86_64 \
   \
   -device virtio-net-pci,netdev=net0 \
   -device edu \
-  -device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/math-accel.sock", "type":"unix"}}' \
+  -device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/math0.sock", "type":"unix"},"addr":"0f.0"}' \
+  -device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/math1.sock", "type":"unix"},"addr":"10.0"}' \
+  -device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/math2.sock", "type":"unix"},"multifunction":true,"addr":"0c.0"}' \
+  -device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/math3.sock", "type":"unix"},"addr":"0c.1"}' \
   \
   -kernel ${KERNEL_PATH} \
   -initrd ${INITRD_PATH} \

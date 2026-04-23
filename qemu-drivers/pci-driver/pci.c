@@ -1,6 +1,7 @@
 #include "pci.h"
 #include "asm-generic/pci_iomap.h"
 #include "char.h"
+#include "common.h"
 #include "linux/cdev.h"
 #include "linux/interrupt.h"
 #include "linux/irqreturn.h"
@@ -20,14 +21,14 @@ static const struct pci_device_id edu_pci_ids[] = {
 
 MODULE_DEVICE_TABLE(pci, edu_pci_ids);
 
-struct edu_dev edu_dev;
+struct edu_dev global_device;
 
 // 2. Probe and remove
 static int edu_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 	int ret = 0;
 
-	cdev_init(&edu_dev.cdev, &edu_fops);
-	edu_dev.pdev = pdev;
+	cdev_init(&global_device.cdev, &edu_fops);
+	global_device.pdev = pdev;
 
 	printk(KERN_INFO EDU_DRIVER_NAME ": probe called\n");
 	ret = pci_enable_device(pdev);
@@ -51,18 +52,18 @@ static int edu_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 
 	// Request IRQ
 	int irq = pdev->irq;
-	ret = request_irq(irq, edu_irq_handler, IRQF_SHARED, EDU_DRIVER_NAME, &edu_dev);
+	ret = request_irq(irq, edu_irq_handler, IRQF_SHARED, EDU_DRIVER_NAME, &global_device);
 	if (ret)
 		goto error_request_irq;
 
 	// Initialize device
-	edu_dev.pdev = pdev;
-	edu_dev.base = bar_base;
-	init_waitqueue_head(&edu_dev.wq);
+	global_device.pdev = pdev;
+	global_device.base = bar_base;
+	init_waitqueue_head(&global_device.wq);
 
-	pci_set_drvdata(pdev, &edu_dev);
+	pci_set_drvdata(pdev, &global_device);
 
-	ret = cdev_add(&edu_dev.cdev, MKDEV(edu_major, 0), 1);
+	ret = cdev_add(&global_device.cdev, MKDEV(edu_major, 0), 1);
 	if (ret < 0) {
 		pr_alert(EDU_DRIVER_NAME ": failed to add character device");
 		goto error_cdev;

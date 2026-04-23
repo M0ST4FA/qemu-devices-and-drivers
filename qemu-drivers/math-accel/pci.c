@@ -15,6 +15,7 @@
 #include "linux/pci.h"
 #include "linux/printk.h"
 #include "linux/slab.h"
+#include "linux/wait.h"
 
 // 1. Main state
 struct mathaccel_device mathaccel_dev_array[MATHACCEL_DEV_NR];
@@ -46,6 +47,15 @@ static irqreturn_t mathaccel_irq_handler(int irq, void *cookie) {
 
 	pr_info(MATHACCEL_DRIVER_NAME ": interrupt called and result is ready! irq: %d, pdev->irq: %d, computed value: %d", irq, dev->pdev->irq, number);
 
+	dev->result = number;
+
+	// Set the condition variable
+	dev->done = 1;
+
+	// Wake up all processes waiting on the queue
+	// They will use the condition variable to decide whether it was spurious
+	wake_up(&dev->wq);
+
 	return IRQ_HANDLED;
 };
 
@@ -62,6 +72,11 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 	priv_dev = kmem_cache_zalloc(mathaccel_cache, GFP_KERNEL);
 	priv_dev->minor = minor;
 	priv_dev->pdev = pdev;
+
+	// Initialize waiting infrastructure
+	init_waitqueue_head(&priv_dev->wq);
+	priv_dev->result = 0;
+	priv_dev->done = 0;
 
 	ret = pci_enable_device(pdev);
 	if (ret < 0) {

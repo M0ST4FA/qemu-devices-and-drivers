@@ -1,5 +1,6 @@
 #include "linux/cdev.h"
 #include "linux/pci.h"
+#include "linux/wait.h"
 
 #define MATHACCEL_DRIVER_NAME "math-accel"
 #define MATHACCEL_DEVICE_ID 0x1234
@@ -22,6 +23,11 @@ struct mathaccel_device {
 	struct cdev cdev;
 	int minor;
 	char name[64];
+
+	struct wait_queue_head wq;
+
+	u64 result;
+	int done;
 };
 
 extern struct mathaccel_device mathaccel_dev[MATHACCEL_DEV_NR];

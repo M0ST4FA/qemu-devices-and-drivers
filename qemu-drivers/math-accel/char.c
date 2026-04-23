@@ -2,12 +2,17 @@
 #include "asm-generic/barrier.h"
 #include "asm-generic/errno-base.h"
 #include "asm-generic/iomap.h"
+#include "asm/current.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
+#include "linux/errno.h"
 #include "linux/fs.h"
 #include "linux/kdev_t.h"
 #include "linux/printk.h"
+#include "linux/sched.h"
+#include "linux/sched/signal.h"
 #include "linux/types.h"
+#include "linux/wait.h"
 #include "pci.h"
 
 #define BUF_SIZE 64
@@ -59,7 +64,6 @@ static ssize_t mathaccel_device_write(struct file *filp, const char __user *user
 };
 
 static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, size_t size, loff_t *offset) {
-	return 0;
 
 	if (*offset > 0)
 		return 0; // EOF
@@ -67,37 +71,55 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 	u32 res = 0;
 	struct mathaccel_device *mdev = filp->private_data;
 	char buf[BUF_SIZE] = {0};
-	ssize_t ret;
+	ssize_t ret = 0;
 
 	if (!mdev)
 		return -ENODEV;
 
-	// ret = wait_event_interruptible(mdev->wq, READ_ONCE(edev->done));
-	if (ret)
+	struct wait_queue_entry waitq_entry = {
+		.private = get_current(),
+		.func = autoremove_wake_function, // Will take the entry as an argument and remove it from waitq
+		.entry = {&(waitq_entry.entry), .prev = &(waitq_entry.entry)},
+	};
+
+	do {
+		// 1. Add myself to waitq
+		prepare_to_wait(&mdev->wq, &waitq_entry, TASK_INTERRUPTIBLE);
+
+		// 2. Check condition
+		if (mdev->done)
+			break;
+
+		// 3. Handle signals
+		if (signal_pending(current)) {
+			ret = -ERESTARTSYS;
+			break;
+		}
+
+		schedule();
+
+	} while (1);
+	finish_wait(&mdev->wq, &waitq_entry); // Remove from waitq
+
+	if (ret < 0)
 		return ret;
 
-	// pr_info(DEVICE_NAME ": device is done computing factorial");
-	//
-	// spin_lock(&mdev->lock);
-	// ret = mdev->result;
-	// spin_unlock(&mdev->lock);
-	//
-	// if ((ret = snprintf(buf, BUF_SIZE, "%u", res)) < 0) {
-	// 	pr_alert(DEVICE_NAME ": failed to convert factorial result to string");
-	// 	return ret;
-	// };
-	//
-	// pr_info(DEVICE_NAME ": result of operation %u", res);
-	// pr_info(DEVICE_NAME ": value copied to buffer %s", buf);
-	//
-	// if (copy_to_user(user_buf, buf, ret))
-	// 	return -EFAULT;
-	//
-	// *user_off += ret;
-	// pr_info(DEVICE_NAME ": user offset now %lld", *user_off);
-	// return ret;
+	res = mdev->result;
+	mdev->done = 0;
 
-	return 0;
+	if ((ret = snprintf(buf, BUF_SIZE, "%u\n", res)) < 0) {
+		pr_alert(MATHACCEL_DRIVER_NAME ": failed to conver math result to string");
+		return ret;
+	};
+
+	if (copy_to_user(user_buf, buf, ret))
+		return -EFAULT;
+
+	pr_info(MATHACCEL_DRIVER_NAME ": read %s of size %ld", buf, ret);
+
+	*offset += ret;
+
+	return ret;
 }
 
 struct file_operations mathaccel_fops = {

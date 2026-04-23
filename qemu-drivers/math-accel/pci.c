@@ -15,10 +15,11 @@
 #include "linux/pci.h"
 #include "linux/printk.h"
 #include "linux/slab.h"
+#include "linux/spinlock.h"
 #include "linux/wait.h"
+#include <linux/atomic.h>
 
 // 1. Main state
-struct mathaccel_device mathaccel_dev_array[MATHACCEL_DEV_NR];
 struct kmem_cache *mathaccel_cache;
 
 DEFINE_IDA(mathaccel_ida);
@@ -47,10 +48,12 @@ static irqreturn_t mathaccel_irq_handler(int irq, void *cookie) {
 
 	pr_info(MATHACCEL_DRIVER_NAME ": interrupt called and result is ready! irq: %d, pdev->irq: %d, computed value: %d", irq, dev->pdev->irq, number);
 
+	spin_lock(&dev->lock);
 	dev->result = number;
 
 	// Set the condition variable
 	dev->done = 1;
+	spin_unlock(&dev->lock);
 
 	// Wake up all processes waiting on the queue
 	// They will use the condition variable to decide whether it was spurious
@@ -75,8 +78,11 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 
 	// Initialize waiting infrastructure
 	init_waitqueue_head(&priv_dev->wq);
+	spin_lock_init(&priv_dev->lock);
 	priv_dev->result = 0;
 	priv_dev->done = 0;
+	atomic_set(&priv_dev->shutting_down, 0);
+	atomic_set(&priv_dev->counter, 0);
 
 	ret = pci_enable_device(pdev);
 	if (ret < 0) {
@@ -112,6 +118,7 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 	}
 
 	cdev_init(&priv_dev->cdev, &mathaccel_fops);
+	priv_dev->cdev.owner = &__this_module;
 	/* This adds the pointer to the inode in memory with (major, minor) identifier (in field *i_cdev).
 	 * You can use container_of() to extract priv_dev back.
 	 */
@@ -142,6 +149,9 @@ static void mathaccel_remove(struct pci_dev *pdev) {
 	struct mathaccel_device *math_dev = pci_get_drvdata(pdev);
 
 	BUG_ON(math_dev == NULL);
+
+	atomic_set_release(&math_dev->shutting_down, 1);
+	wake_up_all(&math_dev->wq);
 
 	cdev_del(&math_dev->cdev);
 	pci_iounmap(pdev, math_dev->bar[0]);

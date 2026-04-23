@@ -101,6 +101,7 @@ static ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, lo
 	if (is_write) {
 		if (bar0_write(state, buf, count, offset) == 0) {
 			printf("[HW] Firing MSI interrupt!\n");
+			sleep(2);					 // Delay for experiment with concurrency chaos
 			vfu_irq_trigger(vfu_ctx, 0); // 0 is the first MSI vector
 			goto success;
 		} else {

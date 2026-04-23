@@ -1,5 +1,7 @@
 #include "linux/cdev.h"
 #include "linux/pci.h"
+#include "linux/spinlock_types.h"
+#include "linux/types.h"
 #include "linux/wait.h"
 
 #define MATHACCEL_DRIVER_NAME "math-accel"
@@ -26,8 +28,13 @@ struct mathaccel_device {
 
 	struct wait_queue_head wq;
 
+	// Protects result and completion variable
+	struct spinlock lock;
 	u64 result;
 	int done;
+
+	atomic_t shutting_down;
+	atomic_t counter;
 };
 
 extern struct mathaccel_device mathaccel_dev[MATHACCEL_DEV_NR];

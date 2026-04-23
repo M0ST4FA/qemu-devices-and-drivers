@@ -11,9 +11,11 @@
 #include "linux/printk.h"
 #include "linux/sched.h"
 #include "linux/sched/signal.h"
+#include "linux/spinlock.h"
 #include "linux/types.h"
 #include "linux/wait.h"
 #include "pci.h"
+#include <linux/atomic.h>
 
 #define BUF_SIZE 64
 
@@ -68,6 +70,8 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 	if (*offset > 0)
 		return 0; // EOF
 
+	pr_info(MATHACCEL_DRIVER_NAME ": [PID %d] entered read", current->pid);
+
 	u32 res = 0;
 	struct mathaccel_device *mdev = filp->private_data;
 	char buf[BUF_SIZE] = {0};
@@ -86,9 +90,18 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		// 1. Add myself to waitq
 		prepare_to_wait(&mdev->wq, &waitq_entry, TASK_INTERRUPTIBLE);
 
-		// 2. Check condition
-		if (mdev->done)
+		// 2. Check conditions
+		spin_lock(&mdev->lock);
+		if (mdev->done) {
+			spin_unlock(&mdev->lock);
 			break;
+		}
+		spin_unlock(&mdev->lock);
+
+		if (atomic_read_acquire(&mdev->shutting_down)) {
+			ret = -ENODEV;
+			break;
+		}
 
 		// 3. Handle signals
 		if (signal_pending(current)) {
@@ -100,12 +113,16 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 
 	} while (1);
 	finish_wait(&mdev->wq, &waitq_entry); // Remove from waitq
-
 	if (ret < 0)
 		return ret;
 
+	pr_info(MATHACCEL_DRIVER_NAME ": [PID %d] woke up with result %llu, counter: %d", current->pid, mdev->result, atomic_read(&mdev->counter));
+
+	spin_lock(&mdev->lock);
 	res = mdev->result;
 	mdev->done = 0;
+	spin_unlock(&mdev->lock);
+	atomic_inc(&mdev->counter);
 
 	if ((ret = snprintf(buf, BUF_SIZE, "%u\n", res)) < 0) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": failed to conver math result to string");
@@ -115,14 +132,14 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 	if (copy_to_user(user_buf, buf, ret))
 		return -EFAULT;
 
-	pr_info(MATHACCEL_DRIVER_NAME ": read %s of size %ld", buf, ret);
-
 	*offset += ret;
 
 	return ret;
 }
 
 struct file_operations mathaccel_fops = {
+	.owner = &__this_module,
+
 	.open = mathaccel_device_open,
 	.release = mathaccel_device_release,
 

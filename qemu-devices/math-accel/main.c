@@ -1,4 +1,5 @@
 #include "libvfio-user.h"
+#include "pci_caps/msi.h"
 #include <asm-generic/errno.h>
 #include <err.h>
 #include <errno.h>
@@ -22,7 +23,19 @@ struct math_device_state {
 	uint32_t status;
 };
 
-static ssize_t bar0_write(struct math_device_state *state, char *const buf, size_t count, loff_t offset) {
+struct msicap msi_cap = {
+	.hdr.id = PCI_CAP_ID_MSI,
+	.hdr.next = 0,
+	.mc = {
+		.msie = 0, // MSI Enable; start disabled
+		.mmc = 0,  // Multi Messages Capable, 0 = 1, 2 = 2, 2 = 4
+		.c64 = 1,  // 64-bit addresses
+		.pvm = 0,  // Per-vector masking
+	},
+};
+
+static ssize_t
+bar0_write(struct math_device_state *state, char *const buf, size_t count, loff_t offset) {
 	uint32_t val = *((uint32_t *)buf);
 	printf("[HW] Write %u to offset 0x%lx\n", val, offset);
 
@@ -87,8 +100,8 @@ static ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, lo
 
 	if (is_write) {
 		if (bar0_write(state, buf, count, offset) == 0) {
-			printf("[HW] Firing INTx interrupt!\n");
-			vfu_irq_trigger(vfu_ctx, VFU_DEV_INTX_IRQ);
+			printf("[HW] Firing MSI interrupt!\n");
+			vfu_irq_trigger(vfu_ctx, 0); // 0 is the first MSI vector
 			goto success;
 		} else {
 			goto error;
@@ -146,11 +159,15 @@ int main(int argc, char *argv[]) {
 	if (ret < 0)
 		err(EXIT_FAILURE, "%s\n", "Failed to setup BAR0");
 
-	// 4. Setup Interrupts (INTx)
-	ret = vfu_setup_device_nr_irqs(vfu_ctx, VFU_DEV_INTX_IRQ, 1);
+	// 4. Setup Interrupts (MSI)
+	ret = vfu_setup_device_nr_irqs(vfu_ctx, VFU_DEV_MSI_IRQ, 1);
 
 	if (ret < 0)
 		err(EXIT_FAILURE, "%s\n", "Failed to setup IRQs");
+
+	ret = vfu_pci_add_capability(vfu_ctx, 0, 0, &msi_cap);
+	if (ret < 0)
+		err(EXIT_FAILURE, "%s\n", "Failed to setup capabilities");
 
 	// 5. Finalize the configuration
 	ret = vfu_realize_ctx(vfu_ctx);

@@ -1,3 +1,5 @@
+#pragma once
+
 #ifdef __KERNEL__
 #include <linux/ioctl.h>
 #else

@@ -3,7 +3,9 @@
 #include "asm-generic/int-ll64.h"
 #include "asm-generic/rwonce.h"
 #include "asm/uaccess.h"
+#include "common.h"
 #include "linux/cdev.h"
+#include "linux/container_of.h"
 #include "linux/device.h"
 #include "linux/device/class.h"
 #include "linux/fs.h"
@@ -15,42 +17,35 @@
 
 #define BUF_SIZE 512
 
-struct file_operations fops = {
-	.open = edu_open,
-	.release = edu_release,
-
-	.read = edu_read,
-	.write = edu_write,
-
-	.unlocked_ioctl = edu_ioctl,
-};
-int major;
+int edu_major;
 struct class *class;
-struct qemuedu_device edu_char_dev;
 
-int edu_open(struct inode *inode, struct file *filp) {
-	pr_info(DEVICE_NAME ": opened character device for edu-pci");
+static int edu_open(struct inode *inode, struct file *filp) {
+	pr_info(EDU_DRIVER_NAME ": opened character device for edu-pci");
 
-	filp->private_data = &edu_dev;
+	if (MINOR(inode->i_rdev) > 0) // The driver supports only one device with 0 as minor number
+		return -ENODEV;
+
+	filp->private_data = container_of(inode->i_cdev, struct edu_dev, cdev);
 
 	return 0;
 };
-int edu_release(struct inode *inode, struct file *filp) {
-	pr_info(DEVICE_NAME ": closed character device for edu-pci");
+static int edu_release(struct inode *inode, struct file *filp) {
+	pr_info(EDU_DRIVER_NAME ": closed character device for edu-pci");
 	return 0;
 };
 
-static inline bool is_computing_factorial(struct qemuedu_pci_device *edev) {
+static inline bool is_computing_factorial(struct edu_dev *edev) {
 	return edu_hw_read(edev, EDU_REG_STATUS) & EDU_STATUS_COMPUTING;
 }
 
-ssize_t edu_read(struct file *filp, char __user *user_buf, size_t user_len, loff_t *user_off) {
+static ssize_t edu_read(struct file *filp, char __user *user_buf, size_t user_len, loff_t *user_off) {
 	if (*user_off > 0)
 		return 0; // EOF
 
 	u32 res = 0;
-	struct qemuedu_pci_device *edev = filp->private_data;
-	pr_info(DEVICE_NAME ": edev address %p", edev);
+	struct edu_dev *edev = filp->private_data;
+	pr_info(EDU_DRIVER_NAME ": edev address %p", edev);
 	char buf[BUF_SIZE] = {0};
 	ssize_t ret;
 
@@ -72,30 +67,30 @@ ssize_t edu_read(struct file *filp, char __user *user_buf, size_t user_len, loff
 	if (ret)
 		return ret;
 
-	pr_info(DEVICE_NAME ": device is done computing factorial");
+	pr_info(EDU_DRIVER_NAME ": device is done computing factorial");
 
 	spin_lock(&edev->lock);
 	ret = edev->result;
 	spin_unlock(&edev->lock);
 
 	if ((ret = snprintf(buf, BUF_SIZE, "%u", res)) < 0) {
-		pr_alert(DEVICE_NAME ": failed to convert factorial result to string");
+		pr_alert(EDU_DRIVER_NAME ": failed to convert factorial result to string");
 		return ret;
 	};
 
-	pr_info(DEVICE_NAME ": result of operation %u", res);
-	pr_info(DEVICE_NAME ": value copied to buffer %s", buf);
+	pr_info(EDU_DRIVER_NAME ": result of operation %u", res);
+	pr_info(EDU_DRIVER_NAME ": value copied to buffer %s", buf);
 
 	if (copy_to_user(user_buf, buf, ret))
 		return -EFAULT;
 
 	*user_off += ret;
-	pr_info(DEVICE_NAME ": user offset now %lld", *user_off);
+	pr_info(EDU_DRIVER_NAME ": user offset now %lld", *user_off);
 	return ret;
 };
-ssize_t edu_write(struct file *filp, const char __user *user_buf, size_t user_len, loff_t *user_off) {
+static ssize_t edu_write(struct file *filp, const char __user *user_buf, size_t user_len, loff_t *user_off) {
 
-	struct qemuedu_pci_device *edev = filp->private_data;
+	struct edu_dev *edev = filp->private_data;
 	u32 number;
 	ssize_t ret = 0, n = user_len < BUF_SIZE - 1 ? user_len : BUF_SIZE - 1; // cap copied amount to BUF_SIZE
 	char buf[BUF_SIZE] = {0};
@@ -118,7 +113,7 @@ ssize_t edu_write(struct file *filp, const char __user *user_buf, size_t user_le
 		buf[n - 1] = '\0';
 
 	if ((ret = kstrtou32(buf, 10, &number))) {
-		pr_alert(DEVICE_NAME ": failure converting from string input (%s) to integer", buf);
+		pr_alert(EDU_DRIVER_NAME ": failure converting from string input (%s) to integer", buf);
 		return ret;
 	}
 
@@ -134,12 +129,12 @@ ssize_t edu_write(struct file *filp, const char __user *user_buf, size_t user_le
 	return n;
 };
 
-static ssize_t ioctl_ident(struct qemuedu_pci_device *edev, u32 __user *arg) {
+static ssize_t ioctl_ident(struct edu_dev *edev, u32 __user *arg) {
 	u32 val = readl(edev->base + EDU_REG_IDENT);
 	return put_user(val, arg);
 }
 
-static ssize_t ioctl_liveness(struct qemuedu_pci_device *edev, u32 __user *arg) {
+static ssize_t ioctl_liveness(struct edu_dev *edev, u32 __user *arg) {
 	u32 challange;
 
 	// 1. Get challange from user
@@ -155,8 +150,8 @@ static ssize_t ioctl_liveness(struct qemuedu_pci_device *edev, u32 __user *arg) 
 	return put_user(challange, arg);
 }
 
-ssize_t edu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
-	struct qemuedu_pci_device *edev = filp->private_data;
+static ssize_t edu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+	struct edu_dev *edev = filp->private_data;
 
 	switch (cmd) {
 		case EDU_IOCTL_IDENT:
@@ -168,23 +163,12 @@ ssize_t edu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 	}
 };
 
-int edu_char_dev_init(struct qemuedu_device *dev, dev_t dev_id) {
-	int ret = 0;
+struct file_operations edu_fops = {
+	.open = edu_open,
+	.release = edu_release,
 
-	cdev_init(&dev->char_device, &fops);
-	ret = cdev_add(&dev->char_device, dev_id, 1);
-	if (ret < 0) {
-		pr_alert(DEVICE_NAME ": failed to add character device");
-		return ret;
-	}
-	dev->device = device_create(class, NULL, dev_id, 0, "%s-polling", DEVICE_NAME);
-	if (dev->device == NULL) {
-		pr_alert(DEVICE_NAME ": failed to create device model device");
-		cdev_del(&dev->char_device);
-	}
+	.read = edu_read,
+	.write = edu_write,
 
-	return 0;
-};
-void edu_char_dev_destroy(struct qemuedu_device *dev) {
-	cdev_del(&dev->char_device);
+	.unlocked_ioctl = edu_ioctl,
 };

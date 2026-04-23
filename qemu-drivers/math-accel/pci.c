@@ -3,6 +3,7 @@
 #include "asm-generic/iomap.h"
 #include "asm-generic/pci_iomap.h"
 #include "char.h"
+#include "linux/cdev.h"
 #include "linux/gfp_types.h"
 #include "linux/idr.h"
 #include "linux/interrupt.h"
@@ -54,7 +55,6 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 
 	priv_dev = &mathaccel_dev_array[minor];
 	priv_dev->minor = minor;
-	// FIXME: Likely a bug (shouldn't copy)
 	priv_dev->pdev = pdev;
 
 	ret = pci_enable_device(pdev);
@@ -116,9 +116,9 @@ error_enable_device:
 }
 
 static void mathaccel_remove(struct pci_dev *pdev) {
-	// FIXME: Likely a bug (pdev will not necessarily contain math_dev arround it)
 	struct mathaccel_device *math_dev = pci_get_drvdata(pdev);
 
+	cdev_del(&math_dev->cdev);
 	pci_free_irq_vectors(pdev);
 	free_irq(pci_irq_vector(pdev, 0), pdev);
 	pci_iounmap(pdev, math_dev->bar[0]);

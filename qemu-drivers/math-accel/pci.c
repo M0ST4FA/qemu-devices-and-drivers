@@ -5,6 +5,8 @@
 #include "asm-generic/pci_iomap.h"
 #include "char.h"
 #include "linux/cdev.h"
+#include "linux/device.h"
+#include "linux/dma-mapping.h"
 #include "linux/gfp_types.h"
 #include "linux/idr.h"
 #include "linux/interrupt.h"
@@ -62,6 +64,39 @@ static irqreturn_t mathaccel_irq_handler(int irq, void *cookie) {
 	return IRQ_HANDLED;
 };
 
+static int mathaccel_init_dma(struct mathaccel_device *math_dev) {
+	struct device *model_dev = &math_dev->pdev->dev;
+	// 1. Tell the kernel we support 64-bit DMA addresses
+	dma_set_mask_and_coherent(model_dev, DMA_BIT_MASK(64));
+
+	// 2. Allocate the submission queue and completion queue
+	math_dev->sq_cpu_addr = dma_alloc_coherent(model_dev,
+											   sizeof(struct math_sq_entry) * MATHACCEL_RINGBUFFER_SIZE,
+											   &math_dev->sq_dma_addr, GFP_KERNEL);
+	if (!math_dev->sq_cpu_addr) {
+		pr_alert(MATHACCEL_DRIVER_NAME ": error during allocation of SQ DMA memory");
+		return -ENOMEM;
+	}
+	pr_info(MATHACCEL_DRIVER_NAME ": allocated submission queue (virtual: %p, DMA: %llx)", math_dev->sq_cpu_addr, math_dev->sq_dma_addr);
+
+	math_dev->cq_cpu_addr = dma_alloc_coherent(model_dev,
+											   sizeof(struct math_cq_entry) * MATHACCEL_RINGBUFFER_SIZE,
+											   &math_dev->cq_dma_addr, GFP_KERNEL);
+	if (!math_dev->sq_cpu_addr) {
+		pr_alert(MATHACCEL_DRIVER_NAME ": error during allocation of CQ DMA memory");
+		dma_free_coherent(model_dev,
+						  sizeof(struct math_sq_entry) * MATHACCEL_RINGBUFFER_SIZE,
+						  math_dev->sq_cpu_addr, math_dev->sq_dma_addr);
+		return -ENOMEM;
+	}
+	pr_info(MATHACCEL_DRIVER_NAME ": allocated completion queue (virtual: %p, DMA: %llx)", math_dev->cq_cpu_addr, math_dev->cq_dma_addr);
+
+	// 3. Inform the hardware for the address we set up for it
+
+	// 4. Inform the hardware how big the ring buffer is
+	return 0;
+};
+
 static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_table) {
 	struct mathaccel_device *priv_dev;
 	int ret = 0, irq = 0, minor = 0, major = MAJOR(firstdev_id);
@@ -117,6 +152,8 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 		goto error_request_irq;
 	}
 
+	ret = mathaccel_init_dma(priv_dev);
+
 	cdev_init(&priv_dev->cdev, &mathaccel_fops);
 	priv_dev->cdev.owner = &__this_module;
 	/* This adds the pointer to the inode in memory with (major, minor) identifier (in field *i_cdev).
@@ -147,11 +184,18 @@ error_enable_device:
 
 static void mathaccel_remove(struct pci_dev *pdev) {
 	struct mathaccel_device *math_dev = pci_get_drvdata(pdev);
-
 	BUG_ON(math_dev == NULL);
+	struct device *model_dev = &math_dev->pdev->dev;
 
 	atomic_set_release(&math_dev->shutting_down, 1);
 	wake_up_all(&math_dev->wq);
+
+	dma_free_coherent(model_dev,
+					  sizeof(struct math_sq_entry) * MATHACCEL_RINGBUFFER_SIZE,
+					  math_dev->sq_cpu_addr, math_dev->sq_dma_addr);
+	dma_free_coherent(model_dev,
+					  sizeof(struct math_sq_entry) * MATHACCEL_RINGBUFFER_SIZE,
+					  math_dev->cq_cpu_addr, math_dev->cq_dma_addr);
 
 	cdev_del(&math_dev->cdev);
 	pci_iounmap(pdev, math_dev->bar[0]);

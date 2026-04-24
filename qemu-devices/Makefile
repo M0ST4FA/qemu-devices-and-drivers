@@ -4,7 +4,7 @@ LIBVFIO_LIB := ${ROOT_DIR}/libvfio-user/build/lib
 
 # BUILD_DIR := ${ROOT_DIR}/build
 CFLAGS += -I${LIBVFIO_INC}
-LDFLAGS += -L${LIBVFIO_LIB} -lvfio-user -ljson-c -lpthread -Wl,-rpath=${LIBVFIO_LIB}
+LDFLAGS += -L${LIBVFIO_LIB} -lvfio-user -Wl,-rpath=${LIBVFIO_LIB}
 
 MAKEFILE_DIRS := $(patsubst %Makefile, %, $(wildcard */Makefile))
 ALL_DEVICES := $(patsubst %/,%,${MAKEFILE_DIRS})

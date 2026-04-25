@@ -7,8 +7,8 @@ CFLAGS += -I${LIBVFIO_INC}
 LDFLAGS += -L${LIBVFIO_LIB} -lvfio-user -Wl,-rpath=${LIBVFIO_LIB}
 
 MAKEFILE_DIRS := $(patsubst %Makefile, %, $(wildcard */Makefile))
-ALL_DEVICES := $(patsubst %/,%,${MAKEFILE_DIRS})
 ALL_DEVICES := $(filter-out libvfio-user/, ${MAKEFILE_DIRS})
+ALL_DEVICES := $(filter-out libvfio-user/, ${ALL_DEVICES})
 
 TARGET_DEVICES := $(if ${SUB_TARGETS},$(filter ${SUB_TARGETS},${ALL_DEVICES}),${ALL_DEVICES})
 

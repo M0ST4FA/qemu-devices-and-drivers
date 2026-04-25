@@ -19,7 +19,7 @@ ${TARGET_DIR}/${TARGET}: ${OBJS}
 
 ${TARGET_DIR}/%.o: %.c
 	@mkdir -p $(dir $@)
-	${CC} ${CFLAGS} -o $@ -c $^
+	${CC} ${CFLAGS} -o $@ -c $(abspath $<)
 
 clean:
 	echo "Cleaning..."

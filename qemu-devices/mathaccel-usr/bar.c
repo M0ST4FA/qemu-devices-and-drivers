@@ -1,6 +1,7 @@
-#include "./include/bar.h"
-#include "./include/common.h"
-#include "./include/dma.h"
+#include "bar.h"
+#include "common.h"
+#include "compute.h"
+#include "fsm.h"
 #include "libvfio-user.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -8,52 +9,52 @@
 #include <unistd.h>
 
 static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
-	struct math_device_state *state = vfu_get_private(ctx);
+	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = *((uint32_t *)buf);
 	printf("[HW] Write %u to offset 0x%lx\n", val, offset);
 
 	switch (offset) {
-		case REG_VAL:
-			state->data = val;
+		case REG_ARG1:
+			dev->args[0] = val;
+			break;
+		case REG_ARG2:
+			dev->args[1] = val;
 			break;
 		case REG_CMD:
-			state->cmd = val;
-			if (val == MATH_OP_MUL) {
-				printf("[HW] Executing acceleration operation...\n");
-				state->data = state->data * 2;
-				state->status = STATUS_COMPLETED_CMD; // done
-			}
+			dev->cmd = val;
+			return fsm_dispatch(ctx, EVT_SUBMIT_LEGACY_JOB);
 			break;
 		case REG_FLAGS:
-			state->flags = val & FLAG_MASK;
+			dev->flags = val & FLAG_MASK;
 			printf("Setting flags to %u\n", val & FLAG_MASK);
 			break;
 		case REG_DMA_SQ_BASE_LOWER:
-			state->sq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
-			printf("[HW:DMA] Lower SQ base address set. SQ base: %p", state->sq_base_addr);
+			dev->sq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
+			printf("[HW:DMA] Lower SQ base address set. SQ base: %p", dev->sq_base_addr);
 			break;
 		case REG_DMA_SQ_BASE_UPPER:
-			state->sq_base_addr = (vfu_dma_addr_t)((uint64_t)state->sq_base_addr | ((uint64_t)val << 32));
-			printf("[HW:DMA] Upper SQ base address set. SQ base: %p", state->sq_base_addr);
+			dev->sq_base_addr = (vfu_dma_addr_t)((uint64_t)dev->sq_base_addr | ((uint64_t)val << 32));
+			printf("[HW:DMA] Upper SQ base address set. SQ base: %p", dev->sq_base_addr);
 			break;
 		case REG_DMA_CQ_BASE_LOWER:
-			state->cq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
-			printf("[HW:DMA] Lower CQ base address set. CQ base: %p", state->cq_base_addr);
+			dev->cq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
+			printf("[HW:DMA] Lower CQ base address set. CQ base: %p", dev->cq_base_addr);
 			break;
 		case REG_DMA_CQ_BASE_UPPER:
-			state->cq_base_addr = (vfu_dma_addr_t)((uint64_t)state->cq_base_addr | (uint64_t)val << 32);
-			printf("[HW:DMA] Upper CQ base address set. CQ base: %p", state->cq_base_addr);
+			dev->cq_base_addr = (vfu_dma_addr_t)((uint64_t)dev->cq_base_addr | (uint64_t)val << 32);
+			printf("[HW:DMA] Upper CQ base address set. CQ base: %p", dev->cq_base_addr);
 			break;
 		case REG_DMA_SQ_TAIL:
-			state->sq_tail = val;
+			dev->sq_tail = val;
 			printf("[HW:DMA] Tail of submission ring buffer updated by client. Head: %u, New tail: %u",
-				   state->sq_head, val);
-			printf("[HW:DMA] Heared a bell ring! Servicing...");
+				   dev->sq_head, val);
+			printf("[HW:DMA] Heared a bell ring! Servicing...\n");
+			return fsm_dispatch(ctx, EVT_SUBMIT_JOB);
 			break;
 		case REG_DMA_CQ_HEAD:
-			state->cq_head = val;
+			dev->cq_head = val;
 			printf("[HW:DMA] Head of completion ring buffer updated by client. Head: %u, New tail: %u",
-				   state->sq_head, val);
+				   dev->sq_head, val);
 			break;
 		default:
 			return -1;
@@ -63,7 +64,7 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 }
 
 static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
-	struct math_device_state *state = vfu_get_private(ctx);
+	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = 0;
 
 	if (offset > REG_OFFSET_MAX) {
@@ -72,32 +73,39 @@ static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] 
 	}
 
 	switch (offset) {
-		case REG_VAL:
-			val = state->data;
+		case REG_ARG1:
+			val = dev->args[0];
+			break;
+		case REG_ARG2:
+			val = dev->args[1];
 			break;
 
 		case REG_STATUS:
-			val = state->status;
+			val = dev->state;
+			break;
 
-			// Reading the status register clears interrupt status
-			if (state->status != STATUS_READY) {
-				printf("[HW] Driver read status, setting it back to ready\n");
-				state->status = STATUS_READY;
-			}
+		case REG_IRQ_CAUSE:
+			val = dev->irq_cause;
+			dev->irq_cause = 0; // writing 1 to clear is more accurate, but this is simpler
+			break;
+
+		case REG_ERROR_CAUSE:
+			val = dev->error_cause;
+			dev->error_cause = 0;
 			break;
 
 		case REG_FLAGS:
-			val = state->flags;
+			val = dev->flags;
 			break;
 
 			// Client should use this to figure out how much device has consumed
 		case REG_DMA_SQ_HEAD:
-			val = state->sq_head;
+			val = dev->sq_head;
 			break;
 
 			// Client should use this to figure out how much was produced
 		case REG_DMA_CQ_TAIL:
-			val = state->cq_tail;
+			val = dev->cq_tail;
 			break;
 
 		default:
@@ -125,7 +133,6 @@ ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t of
 		if (bar0_write(vfu_ctx, buf, count, offset) == 0) {
 			printf("[HW] Firing MSI interrupt!\n");
 			// sleep(2);					 // Delay for experiment with concurrency chaos
-			vfu_irq_trigger(vfu_ctx, 0); // 0 is the first MSI vector
 			goto success;
 		} else {
 			goto error;

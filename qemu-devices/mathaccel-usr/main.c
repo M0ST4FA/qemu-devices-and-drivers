@@ -1,6 +1,6 @@
-#include "include/common.h"
-#include "include/setup.h"
+#include "common.h"
 #include "libvfio-user.h"
+#include "setup.h"
 #include <err.h>
 #include <errno.h>
 #include <stdint.h>
@@ -16,7 +16,7 @@ static void print_usage_exit(const char *prog_name) {
 
 int main(int argc, char *argv[]) {
 	int ret;
-	struct math_device_state state = MATH_DEVICE_STATE_DEFAULT_INIT;
+	struct math_device state = MATH_DEVICE_DEFAULT_INIT;
 
 	if (argc != 2)
 		print_usage_exit(argv[0]);

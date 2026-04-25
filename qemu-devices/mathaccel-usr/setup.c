@@ -1,6 +1,8 @@
 #include "setup.h"
 #include "bar.h"
+#include "common.h"
 #include "dma.h"
+#include "fsm.h"
 #include "libvfio-user.h"
 #include <err.h>
 #include <errno.h>
@@ -19,6 +21,14 @@ static struct msicap msi_cap = {
 	},
 };
 
+static int on_device_reset(vfu_ctx_t *ctx, [[maybe_unused]] enum vfu_reset_type type) {
+	int ret = fsm_dispatch(ctx, EVT_RESET); // STATE_ANY => STATE_RESET
+	if (ret < 0)
+		return ret;
+
+	return fsm_dispatch(ctx, EVT_INIT); // STATE_RESET => STATE_READY
+}
+
 void setup_bars_and_irqs(struct vfu_ctx *vfu_ctx) {
 	int ret = 0;
 
@@ -35,6 +45,8 @@ void setup_bars_and_irqs(struct vfu_ctx *vfu_ctx) {
 
 	if (ret < 0)
 		err(EXIT_FAILURE, "%s\n", "Failed to setup IRQs");
+
+	vfu_setup_device_reset_cb(vfu_ctx, on_device_reset);
 };
 
 void setup_capabilities(struct vfu_ctx *vfu_ctx) {
@@ -47,8 +59,9 @@ void setup_capabilities(struct vfu_ctx *vfu_ctx) {
 
 void realize_and_connect(struct vfu_ctx *vfu_ctx) {
 	int ret = 0, conn_tries = 0;
-	// 5. Finalize the configuration
+	// 5. Finalize the configuration and initialize the device
 	ret = vfu_realize_ctx(vfu_ctx);
+	fsm_dispatch(vfu_ctx, EVT_INIT);
 
 	// 6. Wait for QEMU to connect
 	conn_tries = 0;

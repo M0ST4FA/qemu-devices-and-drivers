@@ -5,36 +5,41 @@
 #include <stdint.h>
 
 enum register_offsets : uint32_t {
-	REG_VAL = 0x0,
-	REG_CMD = 0x4,
-	REG_STATUS = 0x8,
-	REG_FLAGS = 0x12,
+	REG_ARG1 = 0,
+	REG_ARG2 = 4,
+	REG_CMD = 8,
+	REG_STATUS = 12,
+	REG_FLAGS = 16,
 
-	REG_DMA_EN = 0x16,
+	REG_DMA_EN = 20,
 
-	REG_DMA_SQ_BASE_LOWER = 0x20,
-	REG_DMA_SQ_BASE_UPPER = 0x24,
-	REG_DMA_SQ_HEAD = 0x28,
-	REG_DMA_SQ_TAIL = 0x32, // Updating the tail of the ring buffer rings the doorbell
+	REG_DMA_SQ_BASE_LOWER = 24,
+	REG_DMA_SQ_BASE_UPPER = 28,
+	REG_DMA_SQ_HEAD = 32,
+	REG_DMA_SQ_TAIL = 36, // Updating the tail of the ring buffer rings the doorbell
 
-	REG_DMA_CQ_BASE_LOWER = 0x36,
-	REG_DMA_CQ_BASE_UPPER = 0x40,
-	REG_DMA_CQ_HEAD = 0x44,
-	REG_DMA_CQ_TAIL = 0x48,
+	REG_DMA_CQ_BASE_LOWER = 40,
+	REG_DMA_CQ_BASE_UPPER = 44,
+	REG_DMA_CQ_HEAD = 48,
+	REG_DMA_CQ_TAIL = 52,
 
-	REG_DMA_RING_SIZE = 0x52,
+	REG_DMA_RING_SIZE = 56,
 
-	REG_OFFSET_MAX = 0x52,
+	REG_IRQ_CAUSE = 60,
+	REG_ERROR_CAUSE = 64,
+
+	REG_OFFSET_MAX = 64,
 };
-static_assert(REG_OFFSET_MAX == 0x52, "You forgot to change the maximum register offset");
+static_assert(REG_OFFSET_MAX == 64, "You forgot to change the maximum register offset");
 
 // NOTE: A device is basically a state machine, and the driver has to respect that.
 // Here are the states
-enum device_status : uint32_t {
-	STATUS_READY = 0,
-	STATUS_BUSY,
-	STATUS_COMPLETED_CMD,		// For normal command
-	STATUS_COMPLETED_DMA_BATCH, // For DMA batch commands
+enum device_state : uint32_t {
+	STATE_RESET = 0,
+	STATE_READY,
+	STATE_BUSY,
+	STATE_ERROR,
+	STATE_COUNT,
 };
 
 enum device_flags : uint32_t {
@@ -50,19 +55,37 @@ enum math_op : uint32_t {
 	MATH_OP_SUB,
 	MATH_OP_MUL,
 	MATH_OP_DIV,
+	MATH_OP_COUNT,
 };
 
 enum completion_status : uint32_t {
-	COMPLETION_SUCCESS,
-	COMPLETION_ERROR,
+	COMPLETION_SUCCESS = (1 << 0),
+	COMPLETION_ERROR_UNKOWN_CMD = (1 << 1),
+	COMPLETION_ERROR_DIV_BY_ZERO = (1 << 2),
+	COMPLETION_ERROR_INTERNAL = (1 << 30),
+};
+
+enum irq_cause : uint32_t {
+	IRQ_CAUSE_JOB_DONE = (1 << 0),
+	IRQ_CAUSE_CMD_DONE = (1 << 1),
+	IRQ_CAUSE_ERROR = (1 << 2),
+};
+
+enum error_cause : uint32_t {
+	ERR_CAUSE_DMA_READ = (1 << 0),		// failed to read from SQ
+	ERR_CAUSE_DMA_WRITE = (1 << 1),		// failed to write to CQ
+	ERR_CAUSE_DMA_BAD_QUEUE = (1 << 2), // SQ/CQ not configured
+	ERR_CAUSE_CMD_UNKOWN = (1 << 3),	// unkown command (only during legacy command execution)
+	ERR_CAUSE_CMD_EXEC = (1 << 4),		// error during cmd execution
+
+	ERR_CAUSE_INTERNAL = (1 << 30), // unexpected internal error
 };
 
 #pragma pack(push, 1)
 struct math_sq_entry {
 	enum math_op opcode;
 	uint32_t cmd_id;
-	uint32_t arg1;
-	uint32_t arg2;
+	uint32_t args[2];
 };
 
 struct math_cq_entry {
@@ -74,11 +97,13 @@ struct math_cq_entry {
 };
 #pragma pack(pop)
 
-struct math_device_state {
-	uint32_t data;
+struct math_device {
+	uint32_t args[2];
 	enum math_op cmd;
-	enum device_status status;
+	enum device_state state;
 	enum device_flags flags;
+	enum irq_cause irq_cause;
+	enum error_cause error_cause;
 
 	// Physical base address of SQ in kernel memory
 	vfu_dma_addr_t sq_base_addr;
@@ -96,17 +121,17 @@ struct math_device_state {
 	uint16_t ring_size;
 };
 
-#define MATH_DEVICE_STATE_DEFAULT_INIT \
-	{                                  \
-		.data = 0,                     \
-		.cmd = 0,                      \
-		.status = STATUS_READY,        \
-		.flags = 0,                    \
-		.sq_base_addr = 0,             \
-		.sq_head = 0,                  \
-		.sq_tail = 0,                  \
-		.cq_base_addr = 0,             \
-		.cq_head = 0,                  \
-		.cq_tail = 0,                  \
-		.ring_size = 0,                \
+#define MATH_DEVICE_DEFAULT_INIT \
+	{                            \
+		.args = {0, 0},          \
+		.cmd = 0,                \
+		.state = STATE_RESET,    \
+		.flags = 0,              \
+		.sq_base_addr = 0,       \
+		.sq_head = 0,            \
+		.sq_tail = 0,            \
+		.cq_base_addr = 0,       \
+		.cq_head = 0,            \
+		.cq_tail = 0,            \
+		.ring_size = 0,          \
 	}

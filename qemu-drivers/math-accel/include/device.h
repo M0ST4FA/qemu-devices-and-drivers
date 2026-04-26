@@ -1,8 +1,18 @@
 #pragma once
 
-#include "libvfio-user.h"
-#include <assert.h>
-#include <stdint.h>
+#include "linux/cdev.h"
+#include "linux/device.h"
+#include "linux/pci.h"
+#include "linux/spinlock_types.h"
+#include "linux/types.h"
+#include "linux/wait.h"
+
+#define MATHACCEL_DRIVER_NAME "mathaccel"
+#define MATHACCEL_DEVICE_ID 0x1234
+#define MATHACCEL_VENDOR_ID 0x5678
+
+#define MATHACCEL_DEV_NR 4
+#define MATHACCEL_RINGBUFFER_SIZE 256
 
 enum register_offsets : uint32_t {
 	REG_ARG1 = 0,
@@ -42,6 +52,7 @@ enum device_state : uint32_t {
 	STATE_COUNT,
 };
 
+// FIXME: didn't implement this yet (either in driver or device)
 enum device_flags : uint32_t {
 	FLAG_INT_ENABLED = 0x0,
 	FLAG_DMA_ENABLED = 0X1,
@@ -85,57 +96,41 @@ enum error_cause : uint32_t {
 	ERR_CAUSE_INTERNAL = (1 << 30), // unexpected internal error
 };
 
-#pragma pack(push, 1)
-struct math_sq_entry {
-	enum math_op opcode;
-	uint32_t cmd_id;
-	uint32_t args[2];
+struct mathaccel_device {
+
+	// Devices
+	struct pci_dev *pdev;	  // Associated PCI subsystem device
+	struct device *model_dev; // Linux driver model device
+	struct cdev cdev;		  // Associated character subsystem device
+	int minor;
+	char name[64];
+
+	// Resources
+	void *__iomem bar[1]; // Cached PCI base address registers
+
+	// Interrupt-driven IO support and caching
+	struct spinlock lock;	   // Protects `result` and `done`
+	enum irq_cause irq_cause;  // Cached irq_cause for kthread
+	struct wait_queue_head wq; // Wait queue for processes (interrupt-driven IO)
+	struct task_struct *kthread;
+	struct wait_queue_head kthread_wq; // Wait queue for kthreads (threaded interrupts)
+	u64 result;						   // Cached result of legacy command mode
+	int done;						   // Legacy command done
+
+	atomic_t shutting_down; // Indicates we're shutting down. Devices must return -ENODEV if this is true
+	atomic_t counter;		// Counts number of accesses
+
+	// DMA
+	struct math_sq_entry *sq_cpu_addr; // Queue for submitting commands
+	dma_addr_t sq_dma_addr;
+
+	struct math_cq_entry *cq_cpu_addr; // Queue for receiving completed command results
+	dma_addr_t cq_dma_addr;
 };
 
-struct math_cq_entry {
-	uint32_t cmd_id;
-	enum completion_status status; // 0 = success, 1 = error
-	uint64_t result;
-	uint32_t valid;	  // 1 = Hardware wrote this, 0 = Empty slot
-	uint32_t padding; // To make it 24-byte aligned
-};
-#pragma pack(pop)
+int mathaccel_device_init(struct pci_dev *pdev);
+void mathaccel_device_destroy(struct mathaccel_device *math_dev);
 
-struct math_device {
-	uint32_t args[2];
-	enum math_op cmd;
-	enum device_state state;
-	enum device_flags flags;
-	enum irq_cause irq_cause;
-	enum error_cause error_cause;
-
-	// Physical base address of SQ in kernel memory
-	vfu_dma_addr_t sq_base_addr;
-	// Head is managed by hardware (consumer)
-	uint16_t sq_head;
-	// Tail is managed by kernel (producer)
-	uint16_t sq_tail;
-
-	// Physical base address of CQ in kernel memory
-	vfu_dma_addr_t cq_base_addr;
-	uint16_t cq_head; // Actual register can have a different size from interface. Neat
-	uint16_t cq_tail;
-
-	// Ring size; constrained by hardware
-	uint16_t ring_size;
-};
-
-#define MATH_DEVICE_DEFAULT_INIT \
-	{                            \
-		.args = {0, 0},          \
-		.cmd = 0,                \
-		.state = STATE_RESET,    \
-		.flags = 0,              \
-		.sq_base_addr = 0,       \
-		.sq_head = 0,            \
-		.sq_tail = 0,            \
-		.cq_base_addr = 0,       \
-		.cq_head = 0,            \
-		.cq_tail = 0,            \
-		.ring_size = 0,          \
-	}
+extern dev_t firstdev_id;
+extern struct kmem_cache *mathaccel_cache;
+extern struct class *mathaccel_class;

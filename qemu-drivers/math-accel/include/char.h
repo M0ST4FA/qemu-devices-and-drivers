@@ -1,4 +1,3 @@
-#include "linux/types.h"
+#pragma once
 
 extern struct file_operations mathaccel_fops;
-extern dev_t firstdev_id;

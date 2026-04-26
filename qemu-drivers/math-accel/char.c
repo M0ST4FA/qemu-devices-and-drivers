@@ -1,7 +1,4 @@
-#include "include/char.h"
-#include "asm-generic/barrier.h"
 #include "asm-generic/errno-base.h"
-#include "asm-generic/iomap.h"
 #include "asm/current.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
@@ -14,8 +11,10 @@
 #include "linux/spinlock.h"
 #include "linux/types.h"
 #include "linux/wait.h"
-#include "pci.h"
 #include <linux/atomic.h>
+
+#include "char.h"
+#include "device.h"
 
 #define BUF_SIZE 64
 
@@ -58,9 +57,12 @@ static ssize_t mathaccel_device_write(struct file *filp, const char __user *user
 		return ret;
 	}
 
-	iowrite32(number, math_dev->bar[0] + MATHACCEL_REG_DATA);
-	wmb();
-	iowrite32(MATHACCEL_CMD_MULTIPLY, math_dev->bar[0] + MATHACCEL_REG_CMD);
+	if (atomic_read_acquire(&math_dev->shutting_down))
+		return -ENODEV;
+
+	writel(number, math_dev->bar[0] + REG_ARG1);
+	writel(2, math_dev->bar[0] + REG_ARG2);
+	writel(MATH_OP_MUL, math_dev->bar[0] + REG_CMD);
 
 	return n;
 };
@@ -98,14 +100,22 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		}
 		spin_unlock(&mdev->lock);
 
-		if (atomic_read_acquire(&mdev->shutting_down)) {
-			ret = -ENODEV;
-			break;
-		}
-
 		// 3. Handle signals
 		if (signal_pending(current)) {
 			ret = -ERESTARTSYS;
+			break;
+		}
+
+		// 4. Check conditions again
+		spin_lock(&mdev->lock);
+		if (mdev->done) {
+			spin_unlock(&mdev->lock);
+			break;
+		}
+		spin_unlock(&mdev->lock);
+
+		if (atomic_read_acquire(&mdev->shutting_down)) {
+			ret = -ENODEV;
 			break;
 		}
 
@@ -125,7 +135,7 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 	atomic_inc(&mdev->counter);
 
 	if ((ret = snprintf(buf, BUF_SIZE, "%u\n", res)) < 0) {
-		pr_alert(MATHACCEL_DRIVER_NAME ": failed to conver math result to string");
+		pr_alert(MATHACCEL_DRIVER_NAME ": failed to convert math result to string");
 		return ret;
 	};
 
@@ -146,4 +156,3 @@ struct file_operations mathaccel_fops = {
 	.write = mathaccel_device_write,
 	.read = mathaccel_device_read,
 };
-dev_t firstdev_id;

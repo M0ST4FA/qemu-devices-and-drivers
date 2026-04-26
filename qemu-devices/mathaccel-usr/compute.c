@@ -44,7 +44,6 @@ int consume_submission_queue(struct vfu_ctx *ctx) {
 
 int execute_operation(struct math_sq_entry *cmd, struct math_cq_entry *res) {
 	res->status = COMPLETION_SUCCESS;
-	int ret = 0;
 
 	switch (cmd->opcode) {
 		case MATH_OP_ADD:

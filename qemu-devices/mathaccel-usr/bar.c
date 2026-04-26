@@ -1,6 +1,5 @@
 #include "bar.h"
 #include "common.h"
-#include "compute.h"
 #include "fsm.h"
 #include "libvfio-user.h"
 #include <stdint.h>
@@ -22,41 +21,50 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 			break;
 		case REG_CMD:
 			dev->cmd = val;
-			return fsm_dispatch(ctx, EVT_SUBMIT_LEGACY_JOB);
+			return fsm_dispatch(ctx, EVT_SUBMIT_CMD);
 			break;
 		case REG_FLAGS:
 			dev->flags = val & FLAG_MASK;
 			printf("Setting flags to %u\n", val & FLAG_MASK);
 			break;
+
 		case REG_DMA_SQ_BASE_LOWER:
 			dev->sq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
-			printf("[HW:DMA] Lower SQ base address set. SQ base: %p", dev->sq_base_addr);
+			printf("[HW] Lower SQ base address set. SQ base: %p\n", dev->sq_base_addr);
 			break;
 		case REG_DMA_SQ_BASE_UPPER:
 			dev->sq_base_addr = (vfu_dma_addr_t)((uint64_t)dev->sq_base_addr | ((uint64_t)val << 32));
-			printf("[HW:DMA] Upper SQ base address set. SQ base: %p", dev->sq_base_addr);
+			printf("[HW] Upper SQ base address set. SQ base: %p\n", dev->sq_base_addr);
 			break;
 		case REG_DMA_CQ_BASE_LOWER:
 			dev->cq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
-			printf("[HW:DMA] Lower CQ base address set. CQ base: %p", dev->cq_base_addr);
+			printf("[HW] Lower CQ base address set. CQ base: %p\n", dev->cq_base_addr);
 			break;
 		case REG_DMA_CQ_BASE_UPPER:
 			dev->cq_base_addr = (vfu_dma_addr_t)((uint64_t)dev->cq_base_addr | (uint64_t)val << 32);
-			printf("[HW:DMA] Upper CQ base address set. CQ base: %p", dev->cq_base_addr);
+			printf("[HW] Upper CQ base address set. CQ base: %p\n", dev->cq_base_addr);
 			break;
+
 		case REG_DMA_SQ_TAIL:
 			dev->sq_tail = val;
-			printf("[HW:DMA] Tail of submission ring buffer updated by client. Head: %u, New tail: %u",
+			printf("[HW] Tail of submission ring buffer updated by client. Head: %u, New tail: %u\n",
 				   dev->sq_head, val);
-			printf("[HW:DMA] Heared a bell ring! Servicing...\n");
+			printf("[HW] Heared a bell ring! Servicing...\n");
 			return fsm_dispatch(ctx, EVT_SUBMIT_JOB);
 			break;
 		case REG_DMA_CQ_HEAD:
 			dev->cq_head = val;
-			printf("[HW:DMA] Head of completion ring buffer updated by client. Head: %u, New tail: %u",
+			printf("[HW] Head of completion ring buffer updated by client. Head: %u, New tail: %u\n",
 				   dev->sq_head, val);
 			break;
+
+		case REG_DMA_RING_SIZE:
+			dev->ring_size = val;
+			printf("[HW] Size of ring buffer set (%d)\n", val);
+			break;
 		default:
+			printf("[HW] Writing to invalid register (or valid but hasn't been implemented yet). Register: %lu, value: %d\n",
+				   offset, val);
 			return -1;
 	}
 
@@ -66,6 +74,7 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = 0;
+	printf("[HW] Read %u from offset 0x%lx\n", val, offset);
 
 	if (offset > REG_OFFSET_MAX) {
 		val = -1;
@@ -86,12 +95,12 @@ static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] 
 
 		case REG_IRQ_CAUSE:
 			val = dev->irq_cause;
-			dev->irq_cause = 0; // writing 1 to clear is more accurate, but this is simpler
+			dev->irq_cause = IRQ_CAUSE_NOIRQ; // writing 1 to clear is more accurate, but this is simpler
 			break;
 
 		case REG_ERROR_CAUSE:
 			val = dev->error_cause;
-			dev->error_cause = 0;
+			dev->error_cause = ERR_CAUSE_NOERR;
 			break;
 
 		case REG_FLAGS:
@@ -114,7 +123,6 @@ static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] 
 
 finish:
 	*((uint32_t *)buf) = val;
-	printf("[HW] Read %u from offset 0x%lx\n", val, offset);
 	return 0;
 }
 
@@ -131,7 +139,6 @@ ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t of
 
 	if (is_write) {
 		if (bar0_write(vfu_ctx, buf, count, offset) == 0) {
-			printf("[HW] Firing MSI interrupt!\n");
 			// sleep(2);					 // Delay for experiment with concurrency chaos
 			goto success;
 		} else {

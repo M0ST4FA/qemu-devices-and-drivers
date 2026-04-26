@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	// 2. Setup the basic PCI header
-	ret = vfu_pci_init(vfu_ctx, VFU_PCI_TYPE_CONVENTIONAL, PCI_HEADER_TYPE_NORMAL, 0);
+	ret = vfu_pci_init(vfu_ctx, VFU_PCI_TYPE_EXPRESS, PCI_HEADER_TYPE_NORMAL, 0);
 	if (ret < 0)
 		err(EXIT_FAILURE, "%s\n", "Failed to initialize PCI");
 

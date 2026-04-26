@@ -1,5 +1,5 @@
-killall math-accel
-./build/math-accel/math-accel /tmp/math0.sock &
-./build/math-accel/math-accel /tmp/math1.sock &
-./build/math-accel/math-accel /tmp/math2.sock &
-./build/math-accel/math-accel /tmp/math3.sock &
+killall mathaccel-usr
+./build/mathaccel-usr/mathaccel-usr /tmp/math0.sock &
+./build/mathaccel-usr/mathaccel-usr /tmp/math1.sock &
+./build/mathaccel-usr/mathaccel-usr /tmp/math2.sock &
+./build/mathaccel-usr/mathaccel-usr /tmp/math3.sock &

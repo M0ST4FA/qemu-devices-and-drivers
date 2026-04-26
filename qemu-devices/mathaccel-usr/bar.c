@@ -30,40 +30,40 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 
 		case REG_DMA_SQ_BASE_LOWER:
 			dev->sq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
-			printf("[HW] Lower SQ base address set. SQ base: %p\n", dev->sq_base_addr);
+			printf("Lower SQ base address set. SQ base: %p\n", dev->sq_base_addr);
 			break;
 		case REG_DMA_SQ_BASE_UPPER:
 			dev->sq_base_addr = (vfu_dma_addr_t)((uint64_t)dev->sq_base_addr | ((uint64_t)val << 32));
-			printf("[HW] Upper SQ base address set. SQ base: %p\n", dev->sq_base_addr);
+			printf("Upper SQ base address set. SQ base: %p\n", dev->sq_base_addr);
 			break;
 		case REG_DMA_CQ_BASE_LOWER:
 			dev->cq_base_addr = (vfu_dma_addr_t)(0x00000000ffffffff & (uint64_t)val);
-			printf("[HW] Lower CQ base address set. CQ base: %p\n", dev->cq_base_addr);
+			printf("Lower CQ base address set. CQ base: %p\n", dev->cq_base_addr);
 			break;
 		case REG_DMA_CQ_BASE_UPPER:
 			dev->cq_base_addr = (vfu_dma_addr_t)((uint64_t)dev->cq_base_addr | (uint64_t)val << 32);
-			printf("[HW] Upper CQ base address set. CQ base: %p\n", dev->cq_base_addr);
+			printf("Upper CQ base address set. CQ base: %p\n", dev->cq_base_addr);
 			break;
 
 		case REG_DMA_SQ_TAIL:
 			dev->sq_tail = val;
-			printf("[HW] Tail of submission ring buffer updated by client. Head: %u, New tail: %u\n",
+			printf("Tail of submission ring buffer updated by client. Head: %u, New tail: %u\n",
 				   dev->sq_head, val);
-			printf("[HW] Heared a bell ring! Servicing...\n");
+			printf("Heared a bell ring! Servicing...\n");
 			return fsm_dispatch(ctx, EVT_SUBMIT_JOB);
 			break;
 		case REG_DMA_CQ_HEAD:
 			dev->cq_head = val;
-			printf("[HW] Head of completion ring buffer updated by client. Head: %u, New tail: %u\n",
+			printf("Head of completion ring buffer updated by client. Head: %u, New tail: %u\n",
 				   dev->sq_head, val);
 			break;
 
 		case REG_DMA_RING_SIZE:
 			dev->ring_size = val;
-			printf("[HW] Size of ring buffer set (%d)\n", val);
+			printf("Size of ring buffer set (%d)\n", val);
 			break;
 		default:
-			printf("[HW] Writing to invalid register (or valid but hasn't been implemented yet). Register: %lu, value: %d\n",
+			printf("Writing to invalid register (or valid but hasn't been implemented yet). Register: %lu, value: %d\n",
 				   offset, val);
 			return -1;
 	}
@@ -74,7 +74,7 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = 0;
-	printf("[HW] Read %u from offset 0x%lx\n\t", val, offset);
+	printf("[HW] Read %u from offset 0x%lx\n", val, offset);
 
 	if (offset > REG_OFFSET_MAX) {
 		val = -1;

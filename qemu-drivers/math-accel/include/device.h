@@ -54,8 +54,8 @@ enum device_state : uint32_t {
 
 // FIXME: didn't implement this yet (either in driver or device)
 enum device_flags : uint32_t {
-	FLAG_INT_ENABLED = 0x0,
-	FLAG_DMA_ENABLED = 0X1,
+	FLAG_INT_ENABLED = (1 << 0),
+	FLAG_DMA_ENABLED = (1 << 1),
 
 	FLAG_MASK = 0b11,
 };

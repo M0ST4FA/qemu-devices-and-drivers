@@ -43,10 +43,10 @@ enum device_state : uint32_t {
 };
 
 enum device_flags : uint32_t {
-	FLAG_INT_ENABLED = 0x0,
-	FLAG_DMA_ENABLED = 0X1,
+	FLAG_INT_ENABLED = (1 << 0),
+	FLAG_DMA_ENABLED = (1 << 1),
 
-	FLAG_MASK = 0b11,
+	FLAG_MASK = (FLAG_INT_ENABLED | FLAG_DMA_ENABLED),
 };
 static_assert(FLAG_MASK == 0b11, "You forgot to change the flag mask");
 

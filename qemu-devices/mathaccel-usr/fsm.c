@@ -4,6 +4,7 @@
 #include "libvfio-user.h"
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 
 struct transition {
 	enum device_state next; // STATE_COUNT means invalid transition (reject)
@@ -74,7 +75,11 @@ static int action_do_legacy_job(vfu_ctx_t *ctx) {
 		return fsm_dispatch(ctx, EVT_ERROR);
 	}
 
-	struct math_sq_entry current_sq_entry = {0};
+	struct math_sq_entry current_sq_entry = {
+		.opcode = dev->cmd,
+		.args = {dev->args[0], dev->args[1]},
+		.cmd_id = -1,
+	};
 	struct math_cq_entry current_cq_entry = {0};
 	int ret = 0;
 
@@ -96,8 +101,15 @@ static int action_complete(vfu_ctx_t *ctx) {
 
 	printf("[HW:FSM] Work complete, signaling driver\n");
 
-	if (dev->flags & FLAG_INT_ENABLED) // Make sure interrupts are enabled
-		vfu_irq_trigger(ctx, 0);
+	if (dev->flags & FLAG_INT_ENABLED) { // Make sure interrupts are enabled before firing
+		int ret = vfu_irq_trigger(ctx, 0);
+		if (ret < 0) {
+			fprintf(stderr, "[HW:FSM] CRITICAL: Failed to fire interrupt: %s\n", strerror(errno));
+		} else {
+			printf("[HW:FSM] Successfully fired interrupt!\n");
+		}
+	} else
+		fprintf(stderr, "[HW:FSM]: Interrupts disabled. Not sending interrupt\n");
 
 	return 0;
 };
@@ -112,8 +124,15 @@ static int action_error(vfu_ctx_t *ctx) {
 	dev->irq_cause |= IRQ_CAUSE_ERROR;
 
 	// Trigger IRQ so that driver examines error (only if interrupts are enabled)
-	if (dev->flags & FLAG_INT_ENABLED)
-		vfu_irq_trigger(ctx, 0);
+	if (dev->flags & FLAG_INT_ENABLED) {
+		int ret = vfu_irq_trigger(ctx, 0);
+		if (ret < 0) {
+			fprintf(stderr, "[HW:FSM] CRITICAL: Failed to fire interrupt: %s\n", strerror(errno));
+		} else {
+			printf("[HW:FSM] Successfully fired interrupt!\n");
+		}
+	} else
+		fprintf(stderr, "[HW:FSM]: Interrupts disabled. Not sending interrupt\n");
 
 	return 0;
 };

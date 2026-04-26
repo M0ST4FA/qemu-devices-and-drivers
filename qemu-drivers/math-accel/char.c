@@ -92,10 +92,13 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		// 1. Add myself to waitq
 		prepare_to_wait(&mdev->wq, &waitq_entry, TASK_INTERRUPTIBLE);
 
-		// 2. Check conditions
+		// 2. Check and assume atomically
 		spin_lock(&mdev->lock);
 		if (mdev->done) {
+			res = mdev->result;
+			mdev->done = 0;
 			spin_unlock(&mdev->lock);
+			atomic_inc(&mdev->counter);
 			break;
 		}
 		spin_unlock(&mdev->lock);
@@ -106,14 +109,7 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 			break;
 		}
 
-		// 4. Check conditions again
-		spin_lock(&mdev->lock);
-		if (mdev->done) {
-			spin_unlock(&mdev->lock);
-			break;
-		}
-		spin_unlock(&mdev->lock);
-
+		// 4. Check shutdown state
 		if (atomic_read_acquire(&mdev->shutting_down)) {
 			ret = -ENODEV;
 			break;
@@ -122,17 +118,12 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		schedule();
 
 	} while (1);
+	// Remove yourself from the waitq and check errors
 	finish_wait(&mdev->wq, &waitq_entry); // Remove from waitq
 	if (ret < 0)
 		return ret;
 
 	pr_info(MATHACCEL_DRIVER_NAME ": [PID %d] woke up with result %llu, counter: %d", current->pid, mdev->result, atomic_read(&mdev->counter));
-
-	spin_lock(&mdev->lock);
-	res = mdev->result;
-	mdev->done = 0;
-	spin_unlock(&mdev->lock);
-	atomic_inc(&mdev->counter);
 
 	if ((ret = snprintf(buf, BUF_SIZE, "%u\n", res)) < 0) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": failed to convert math result to string");

@@ -19,6 +19,9 @@ int consume_submission_queue(struct vfu_ctx *ctx) {
 			return fsm_dispatch(ctx, EVT_ERROR);
 		}
 
+		if (ret == -EAGAIN) // We processed all commands
+			break;
+
 		// Errors here are user-level, not device-level
 		// Should not fail, and are already handled well by the function (write an error record)
 		execute_operation(&current_sq_entry, &current_cq_entry);
@@ -44,6 +47,8 @@ int consume_submission_queue(struct vfu_ctx *ctx) {
 
 int execute_operation(struct math_sq_entry *cmd, struct math_cq_entry *res) {
 	res->status = COMPLETION_SUCCESS;
+	res->cmd_id = cmd->cmd_id;
+	res->valid = 1;
 
 	switch (cmd->opcode) {
 		case MATH_OP_ADD:
@@ -71,8 +76,6 @@ int execute_operation(struct math_sq_entry *cmd, struct math_cq_entry *res) {
 			res->result = -1;
 			break;
 	}
-
-	res->valid = 1;
 
 	if (res->status == COMPLETION_SUCCESS)
 		return 0;

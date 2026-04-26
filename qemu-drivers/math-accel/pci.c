@@ -2,6 +2,7 @@
 #include "asm-generic/bug.h"
 #include "asm-generic/pci_iomap.h"
 #include "kthread.h"
+#include "linux/delay.h"
 #include "linux/interrupt.h"
 #include "linux/mod_devicetable.h"
 #include "linux/module.h"
@@ -72,6 +73,11 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 	// 3. Configure DMA
 	ret = mathaccel_init_dma(math_dev);
 
+	// 4. Configure device
+	int flags = readl(math_dev->bar[0] + REG_FLAGS);
+	flags |= FLAG_INT_ENABLED;
+	writel(flags, math_dev->bar[0] + REG_FLAGS);
+
 	return 0;
 
 error_request_irq:
@@ -93,26 +99,32 @@ static void mathaccel_remove(struct pci_dev *pdev) {
 	struct mathaccel_device *math_dev = pci_get_drvdata(pdev);
 	BUG_ON(math_dev == NULL);
 
-	// 1. Stop all activity (kernel thread and other processes)
+	// 1. Stop all consumers (kthread consuming device, and other tasks consuming buffers populated by kthread)
 	// FIXME: TOCTOU bug here. Assume whe set it shutting_down after a device has already checked
 	// Solution is to store the state of the device in the struct and check it atomically
 	atomic_set_release(&math_dev->shutting_down, 1);
 	wake_up_all(&math_dev->wq);
 
-	// NOTE: Important to stop it early to prevent UAF errors
+	// 2. Stop device activity
+	int flags = readl(math_dev->bar[0] + REG_FLAGS);
+	flags &= ~(FLAG_INT_ENABLED | FLAG_DMA_ENABLED);
+	writel(flags, math_dev->bar[0] + REG_FLAGS);
+	// Never issue FLR in the remove path (can reinable interrupts)
+	// pci_reset_function(pdev);
+
+	free_irq(pci_irq_vector(pdev, 0), math_dev); // blocks until last handler is done
+	pci_free_irq_vectors(pdev);
+
+	// 3. Now safe to stop the kthread - IRQ handler cannot fire and compete for locks
 	stop_kthread(math_dev);
 
-	// 2. Release DMA resources
+	// 4. Release kernel PCI and DMA resources
 	mathaccel_release_dma(math_dev);
-
-	// 3. Release PCI resources
-	free_irq(pci_irq_vector(pdev, 0), math_dev);
 	pci_iounmap(pdev, math_dev->bar[0]);
-	pci_free_irq_vectors(pdev);
 	pci_release_region(pdev, 0);
 	pci_disable_device(pdev);
 
-	// 4. Free device
+	// 5. Free device
 	mathaccel_device_destroy(math_dev);
 }
 

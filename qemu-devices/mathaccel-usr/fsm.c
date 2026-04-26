@@ -45,6 +45,12 @@ static int action_reset(vfu_ctx_t *ctx) {
 static int action_start_dma(vfu_ctx_t *ctx) {
 	struct math_device *dev = vfu_get_private(ctx);
 
+	if (!(dev->flags & FLAG_DMA_ENABLED)) {
+		fprintf(stderr, "[HW:FSM] Attempting DMA operation when DMA is not enabled\n");
+		dev->error_cause |= ERR_CAUSE_DMA_DISABLED;
+		return fsm_dispatch(ctx, EVT_ERROR);
+	};
+
 	if (dev->sq_base_addr == NULL) {
 		fprintf(stderr, "[HW:FSM] SQ base not set, can't start DMA\n");
 		dev->error_cause |= ERR_CAUSE_DMA_BAD_QUEUE;
@@ -86,10 +92,12 @@ static int action_do_legacy_job(vfu_ctx_t *ctx) {
 
 // NOTE: irq_cause must be set before calling this function
 static int action_complete(vfu_ctx_t *ctx) {
-	// struct math_device *dev = vfu_get_private(ctx);
+	struct math_device *dev = vfu_get_private(ctx);
 
 	printf("[HW:FSM] Work complete, signaling driver\n");
-	vfu_irq_trigger(ctx, 0);
+
+	if (dev->flags & FLAG_INT_ENABLED) // Make sure interrupts are enabled
+		vfu_irq_trigger(ctx, 0);
 
 	return 0;
 };
@@ -103,8 +111,10 @@ static int action_error(vfu_ctx_t *ctx) {
 
 	dev->irq_cause |= IRQ_CAUSE_ERROR;
 
-	// Trigger IRQ so that driver examines error
-	vfu_irq_trigger(ctx, 0);
+	// Trigger IRQ so that driver examines error (only if interrupts are enabled)
+	if (dev->flags & FLAG_INT_ENABLED)
+		vfu_irq_trigger(ctx, 0);
+
 	return 0;
 };
 

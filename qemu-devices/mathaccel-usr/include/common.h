@@ -76,11 +76,12 @@ enum irq_cause : uint32_t {
 enum error_cause : uint32_t {
 	ERR_CAUSE_NOERR = 0,
 
-	ERR_CAUSE_DMA_READ = (1 << 0),		// failed to read from SQ
-	ERR_CAUSE_DMA_WRITE = (1 << 1),		// failed to write to CQ
-	ERR_CAUSE_DMA_BAD_QUEUE = (1 << 2), // SQ/CQ not configured
-	ERR_CAUSE_CMD_UNKOWN = (1 << 3),	// unkown command (only during legacy command execution)
-	ERR_CAUSE_CMD_EXEC = (1 << 4),		// error during cmd execution
+	ERR_CAUSE_DMA_DISABLED = (1 << 0),	// DMA operation when it is disabled
+	ERR_CAUSE_DMA_READ = (1 << 1),		// failed to read from SQ
+	ERR_CAUSE_DMA_WRITE = (1 << 2),		// failed to write to CQ
+	ERR_CAUSE_DMA_BAD_QUEUE = (1 << 3), // SQ/CQ not configured
+	ERR_CAUSE_CMD_UNKOWN = (1 << 4),	// unkown command (only during legacy command execution)
+	ERR_CAUSE_CMD_EXEC = (1 << 5),		// error during cmd execution
 
 	ERR_CAUSE_INTERNAL = (1 << 30), // unexpected internal error
 };

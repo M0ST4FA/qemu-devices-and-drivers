@@ -10,7 +10,7 @@
 static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = *((uint32_t *)buf);
-	printf("[HW] Write %u to offset 0x%lx\n", val, offset);
+	printf("[HW] Write %u to offset 0x%lx\n\t", val, offset);
 
 	switch (offset) {
 		case REG_ARG1:
@@ -74,7 +74,7 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = 0;
-	printf("[HW] Read %u from offset 0x%lx\n", val, offset);
+	printf("[HW] Read %u from offset 0x%lx\n\t", val, offset);
 
 	if (offset > REG_OFFSET_MAX) {
 		val = -1;

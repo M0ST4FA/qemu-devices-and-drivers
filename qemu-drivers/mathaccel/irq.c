@@ -1,22 +1,24 @@
-#include "device.h"
-#include "linux/atomic/atomic-instrumented.h"
 #include "linux/irqreturn.h"
+#include "linux/printk.h"
 #include "linux/spinlock.h"
 
+#include "device.h"
+#include "dma.h"
 #include "irq.h"
 
+/* Handle error from bottom half
+ * @note Expects to be called only in case there's an error; Oops otherwise
+ * */
 void mathaccel_irq_handle_error(struct mathaccel_device *dev) {
 	int ret = 0;
-	enum irq_cause irq_cause = dev->irq_cause;
 	enum error_cause err_cause;
 
 	pr_info(MATHACCEL_DRIVER_NAME ": interrupt indicating error for device (%d,%d)", MAJOR(firstdev_id), dev->minor);
-	if (!(irq_cause & IRQ_CAUSE_ERROR)) {
-		pr_info(MATHACCEL_DRIVER_NAME ":\t\tthe cause of the IRQ is not an error. Probably a bug in the device");
-		return;
-	}
 
 	err_cause = readl(dev->bar[0] + REG_ERROR_CAUSE);
+	BUG_ON(err_cause == ERR_CAUSE_NOERR);
+
+	atomic_set(&dev->wakeup_cause, WAKEUP_CAUSE_ERROR);
 	pr_info(MATHACCEL_DRIVER_NAME ":\t\terror cause: %d, resetting function (device)", err_cause);
 
 	/* NOTE: both pci_reset_function() and pci_reset_bus() take locks, save state and then restore it later
@@ -26,13 +28,21 @@ void mathaccel_irq_handle_error(struct mathaccel_device *dev) {
 	ret = pci_reset_function(dev->pdev);
 	if (ret == 0) {
 		pr_info(MATHACCEL_DRIVER_NAME ":\t\tsuccessfullly reset function");
-		return;
+	} else {
+		pr_info(MATHACCEL_DRIVER_NAME ":\t\tfailed to reset function (probably device doesn't support FLR), resetting bus");
+		ret = pci_reset_bus(dev->pdev);
+		if (!ret)
+			pr_info(MATHACCEL_DRIVER_NAME ":\t\tfailed to reset bus (critical error)! code: %d", ret);
 	}
 
-	pr_info(MATHACCEL_DRIVER_NAME ":\t\tfailed to reset function (probably device doesn't support FLR), resetting bus");
-	ret = pci_reset_bus(dev->pdev);
-	if (!ret)
-		pr_info(MATHACCEL_DRIVER_NAME ":\t\tfailed to reset bus (critical error)! code: %d", ret);
+	// 3. Reconfigure DMA
+	ret = mathaccel_init_dma(dev);
+
+	// 4. Reconfigure device
+	int flags = readl(dev->bar[0] + REG_FLAGS);
+	flags |= (FLAG_INT_ENABLED | FLAG_DMA_ENABLED);
+	pci_set_master(dev->pdev);
+	writel(flags, dev->bar[0] + REG_FLAGS);
 
 	wake_up(&dev->wq);
 };
@@ -45,14 +55,15 @@ void mathaccel_irq_read_legacy_cmd_result(struct mathaccel_device *dev) {
 	spin_lock(&dev->legacy_cmd_lock);
 	dev->result = number;
 	// Set the condition variable
-	dev->done = 1;
 	spin_unlock(&dev->legacy_cmd_lock);
+
+	atomic_set(&dev->wakeup_cause, WAKEUP_CAUSE_CMD_DONE);
 
 	wake_up(&dev->wq);
 };
 
 void mathaccel_irq_consume_completion_queue(struct mathaccel_device *dev) {
-	atomic_set(&dev->job_done, 1);
+	atomic_set(&dev->wakeup_cause, WAKEUP_CAUSE_JOB_DONE);
 	wake_up(&dev->wq);
 };
 

@@ -36,14 +36,15 @@ int mathaccel_device_init(struct pci_dev *pdev) {
 	math_dev->pdev = pdev;
 
 	// 2. Initialize interrupt-driven IO infrastructure
+	atomic_set(&math_dev->wakeup_cause, 0);
 	init_waitqueue_head(&math_dev->wq);
 	init_waitqueue_head(&math_dev->kthread_wq);
 
 	spin_lock_init(&math_dev->legacy_cmd_lock);
+	spin_lock_init(&math_dev->dma_lock);
+
 	math_dev->irq_cause = IRQ_CAUSE_NOIRQ;
 	math_dev->result = 0;
-	math_dev->done = 0;
-	atomic_set(&math_dev->shutting_down, 0);
 	atomic_set(&math_dev->counter, 0);
 
 	// xa_init_flags(&math_dev->active_submissions, XA_FLAGS_ALLOC);
@@ -101,8 +102,6 @@ void mathaccel_device_destroy(struct mathaccel_device *math_dev) {
  * @returns Index of cmd in submission queue. This will be the same in completion queue and should be used to obtain result.
  * */
 int mathaccel_submit_one_cmd(struct mathaccel_device *math_dev, struct mathaccel_req *req) {
-	u32 cmd_id;
-
 	// 1. Get the tail of the submission and make sure it is not full
 	spin_lock(&math_dev->dma_lock);
 	u32 sq_head = math_dev->sq_head;
@@ -115,18 +114,15 @@ int mathaccel_submit_one_cmd(struct mathaccel_device *math_dev, struct mathaccel
 		return -EBUSY;
 	}
 
-	// 2. Allocate command ID
+	// 2. Fill in the data
 	struct math_sq_entry *current_entry = &math_dev->sq_cpu_addr[sq_tail % math_dev->ring_size];
-	cmd_id = atomic_inc_return(&math_dev->cmdid_counter);
-	current_entry->cmd_id = cmd_id;
-
-	// 3. Fill in the data
+	current_entry->cmd_id = req->cmd_id;
 	current_entry->args[0] = req->args[0];
 	current_entry->args[1] = req->args[1];
 	current_entry->opcode = req->opcode;
 
-	// 4. Advance counter
-	math_dev->sq_tail++;
+	// 3. Advance tail
+	math_dev->sq_tail = (math_dev->sq_tail + 1) % math_dev->ring_size;
 
 	spin_unlock(&math_dev->dma_lock);
 	return sq_tail; // Index
@@ -152,7 +148,6 @@ int mathaccel_consume_one_cmd(struct mathaccel_device *math_dev, int index, stru
 	req->status = entry->status;
 
 	entry->valid = 0;
-	atomic_set(&math_dev->job_done, 0);
 
 	// FIXME: it seems that making completion queue a ringbuffer is useless as it is accessed by index anyway
 

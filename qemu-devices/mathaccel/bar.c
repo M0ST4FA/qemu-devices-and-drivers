@@ -1,13 +1,15 @@
-#include "bar.h"
-#include "common.h"
-#include "fsm.h"
 #include "libvfio-user.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
+#include "bar.h"
+#include "device.h"
+#include "fsm.h"
+#include "mathaccel/include/hw.h"
+
+static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, off_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = *((uint32_t *)buf);
 	printf("[HW] Write %u to offset 0x%lx\n\t", val, offset);
@@ -71,7 +73,7 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 	return 0;
 }
 
-static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, loff_t offset) {
+static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, off_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = 0;
 

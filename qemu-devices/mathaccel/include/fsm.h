@@ -1,7 +1,6 @@
 #pragma once
 #include <stdint.h>
 
-#include "common.h"
 #include "libvfio-user.h"
 
 enum device_event : uint32_t {

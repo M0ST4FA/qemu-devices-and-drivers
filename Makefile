@@ -1,10 +1,10 @@
-export CC := gcc
-export CFLAGS += -Wall -Wextra -g -Og
-export LDFLAGS +=
-
 PROJ_PATH := /home/m0st4fa/workspace/kernel/experiments/devices
 BUILD_DIR := ${PROJ_PATH}/build
 SUBDIRS := "qemu-drivers" "qemu-devices" "user-clients"
+
+export CC := gcc
+export CFLAGS += -Wall -Wextra -g -Og -I${PROJ_PATH}/qemu-drivers
+export LDFLAGS +=
 
 KBUILD_MAKEFILE := /home/m0st4fa/workspace/kernel/linux-build/amd64-debug/Makefile
 MODULE_PATH := ${CURDIR}

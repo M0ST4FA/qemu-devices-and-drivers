@@ -21,10 +21,10 @@ enum completion_status : __u32 {
 
 struct [[gnu::packed]] mathaccel_req {
 	enum math_op opcode;
-	__u32 args[2];
-	__u64 result; // kernel writes the result back here
-	enum completion_status status;
 	__u32 cmd_id; // kernel fills this in; userspace can use it for tracking
+	__s32 args[2];
+	__s64 result; // kernel writes the result back here
+	enum completion_status status;
 
 	__u8 _pad[4]; // align the struct to 8-byte boundary (32-byte in size; important for arrays)
 };

@@ -1,10 +1,12 @@
-#include "fsm.h"
-#include "common.h"
-#include "compute.h"
 #include "libvfio-user.h"
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "compute.h"
+#include "device.h"
+#include "fsm.h"
+#include "mathaccel/include/hw.h"
 
 struct transition {
 	enum device_state next; // STATE_COUNT means invalid transition (reject)
@@ -141,7 +143,7 @@ static const struct transition fsm[STATE_COUNT][EVT_COUNT] = {
 
 	[STATE_RESET] = {
 		[EVT_INIT] = {STATE_READY, action_init},
-		// all others → { STATE_COUNT, NULL } = illegal
+		// all others → { STATE_INVALID, NULL } = illegal
 	},
 
 	[STATE_READY] = {
@@ -168,7 +170,7 @@ int fsm_dispatch(vfu_ctx_t *ctx, enum device_event evt) {
 	struct math_device *dev = vfu_get_private(ctx);
 	struct transition t = fsm[dev->state][evt];
 
-	if (t.next == STATE_COUNT) {
+	if (t.next == STATE_INVALID) {
 		fprintf(stderr, "[HW:fsm] Illegal transition: state=%d event=%d\n", dev->state, evt);
 		return -EINVAL;
 	}

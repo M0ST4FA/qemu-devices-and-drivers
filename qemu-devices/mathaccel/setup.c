@@ -1,12 +1,13 @@
-#include "setup.h"
-#include "bar.h"
-#include "fsm.h"
 #include "libvfio-user.h"
 #include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/errno.h>
+
+#include "bar.h"
+#include "fsm.h"
+#include "setup.h"
 
 static struct msicap msi_cap = {
 	.hdr.id = PCI_CAP_ID_MSI,
@@ -18,6 +19,8 @@ static struct msicap msi_cap = {
 		.pvm = 0,  // Per-vector masking
 	},
 };
+
+// CALLBACKS
 
 static int on_device_reset(vfu_ctx_t *ctx, [[maybe_unused]] enum vfu_reset_type type) {
 
@@ -42,7 +45,15 @@ static int on_device_reset(vfu_ctx_t *ctx, [[maybe_unused]] enum vfu_reset_type 
 	return fsm_dispatch(ctx, EVT_INIT); // STATE_RESET => STATE_READY
 }
 
-void setup_bars_and_irqs(struct vfu_ctx *vfu_ctx) {
+static void on_dma_register([[maybe_unused]] vfu_ctx_t *ctx, [[maybe_unused]] vfu_dma_info_t *dma_info) {
+
+};
+static void on_dma_unregister([[maybe_unused]] vfu_ctx_t *ctx, [[maybe_unused]] vfu_dma_info_t *dma_info) {
+
+};
+
+// SETUP HELPERS
+void setup_regions_and_irqs(struct vfu_ctx *vfu_ctx) {
 	int ret = 0;
 
 	// 1. Setup BAR 0
@@ -64,6 +75,11 @@ void setup_bars_and_irqs(struct vfu_ctx *vfu_ctx) {
 	ret = vfu_setup_device_reset_cb(vfu_ctx, on_device_reset);
 	if (ret < 0)
 		err(EXIT_FAILURE, "%s\n", "Failed to setup FLR handler");
+
+	// 4. Setup DMA controller
+	ret = vfu_setup_device_dma(vfu_ctx, 1024, on_dma_register, on_dma_unregister);
+	if (ret < 0)
+		err(EXIT_FAILURE, "%s\n", "Failed to setup device DMA");
 };
 
 void setup_capabilities(struct vfu_ctx *vfu_ctx) {

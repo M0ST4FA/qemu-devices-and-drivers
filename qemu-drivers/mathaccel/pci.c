@@ -2,7 +2,6 @@
 #include "asm-generic/bug.h"
 #include "asm-generic/pci_iomap.h"
 #include "kthread.h"
-#include "linux/delay.h"
 #include "linux/interrupt.h"
 #include "linux/mod_devicetable.h"
 #include "linux/module.h"
@@ -103,7 +102,7 @@ static void mathaccel_remove(struct pci_dev *pdev) {
 	// 1. Stop all consumers (kthread consuming device, and other tasks consuming buffers populated by kthread)
 	// FIXME: TOCTOU bug here. Assume whe set it shutting_down after a device has already checked
 	// Solution is to store the state of the device in the struct and check it atomically
-	atomic_set_release(&math_dev->shutting_down, 1);
+	atomic_set_release(&math_dev->wakeup_cause, WAKEUP_CAUSE_SHUTTING_DOWN);
 	wake_up_all(&math_dev->wq);
 
 	// 2. Stop device activity

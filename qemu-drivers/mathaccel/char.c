@@ -9,7 +9,6 @@
 #include "linux/printk.h"
 #include "linux/sched.h"
 #include "linux/sched/signal.h"
-#include "linux/spinlock.h"
 #include "linux/types.h"
 #include "linux/uaccess.h"
 #include "linux/wait.h"
@@ -60,7 +59,7 @@ static ssize_t mathaccel_device_write(struct file *filp, const char __user *user
 		return ret;
 	}
 
-	if (atomic_read_acquire(&math_dev->shutting_down))
+	if (atomic_read_acquire(&math_dev->wakeup_cause) == WAKEUP_CAUSE_SHUTTING_DOWN)
 		return -ENODEV;
 
 	writel(number, math_dev->bar[0] + REG_ARG1);
@@ -95,16 +94,20 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		// 1. Add myself to waitq
 		prepare_to_wait(&mdev->wq, &waitq_entry, TASK_INTERRUPTIBLE);
 
-		// 2. Check and assume atomically
-		spin_lock(&mdev->legacy_cmd_lock);
-		if (mdev->done) {
+		// NOTE: in 2, we do compxchg to make sure only one consumer consumes the result
+
+		// 2a. Check whether we woke up because of an error
+		if (atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_ERROR, 0) == WAKEUP_CAUSE_ERROR) {
+			ret = -EIO;
+			break;
+		};
+
+		// 2b. Check whether we woke up because a result is there
+		if (atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_CMD_DONE, 0) == WAKEUP_CAUSE_CMD_DONE) {
 			res = mdev->result;
-			mdev->done = 0;
-			spin_unlock(&mdev->legacy_cmd_lock);
 			atomic_inc(&mdev->counter);
 			break;
 		}
-		spin_unlock(&mdev->legacy_cmd_lock);
 
 		// 3. Handle signals
 		if (signal_pending(current)) {
@@ -113,7 +116,8 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		}
 
 		// 4. Check shutdown state
-		if (atomic_read_acquire(&mdev->shutting_down)) {
+		// NOTE: We do not reset this to 0 (via compxchg) to make sure that all wakers see it
+		if (atomic_read_acquire(&mdev->wakeup_cause) == WAKEUP_CAUSE_SHUTTING_DOWN) {
 			ret = -ENODEV;
 			break;
 		}
@@ -126,7 +130,8 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 	if (ret < 0)
 		return ret;
 
-	pr_info(MATHACCEL_DRIVER_NAME ": [PID %d] woke up with result %llu, counter: %d", current->pid, mdev->result, atomic_read(&mdev->counter));
+	pr_info(MATHACCEL_DRIVER_NAME ": [PID %d] woke up with result %llu, counter: %d",
+			current->pid, mdev->result, atomic_read(&mdev->counter));
 
 	if ((ret = snprintf(buf, BUF_SIZE, "%u\n", res)) < 0) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": failed to convert math result to string");
@@ -142,7 +147,8 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 }
 
 static ssize_t mathaccel_ioc_compute(struct mathaccel_device *mdev, struct mathaccel_req __user *user_req) {
-	int ret = 0;
+	int ret = 0, res_index;
+	enum wakeup_cause wakeup_cause;
 	struct mathaccel_req kernel_req;
 
 	// a. Copy request from userspace
@@ -153,23 +159,44 @@ static ssize_t mathaccel_ioc_compute(struct mathaccel_device *mdev, struct matha
 	if (kernel_req.opcode >= MATH_OP_COUNT)
 		return -EINVAL;
 
-	// c. Write command into submission queue
-	ret = mathaccel_submit_one_cmd(mdev, &kernel_req);
+	// c. Give the command an ID and write it into submission queue
+	kernel_req.cmd_id = atomic_inc_return(&mdev->cmdid_counter);
+	res_index = ret = mathaccel_submit_one_cmd(mdev, &kernel_req);
 	if (ret < 0)
 		return ret;
+
+	pr_info(MATHACCEL_DRIVER_NAME ": before computation: kernel request (OP: %d, ARG1: %d, ARG2: %d, cmd_id: %d), user_req: %p\n",
+			kernel_req.opcode, kernel_req.args[0], kernel_req.args[1], kernel_req.cmd_id, user_req);
+
 	mathaccel_start_dma_job(mdev);
 
-	// d. Block until device siganls completion
-	ret = wait_event_interruptible(mdev->wq, atomic_read(&mdev->job_done) || atomic_read(&mdev->shutting_down));
-	if (ret) // Spurious
+#define JOB_WAKEUP_CONDITION (((wakeup_cause = atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_JOB_DONE, 0)) == WAKEUP_CAUSE_JOB_DONE) || \
+							  ((wakeup_cause = atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_ERROR, 0)) == WAKEUP_CAUSE_ERROR) ||       \
+							  (wakeup_cause = atomic_read_acquire(&mdev->wakeup_cause)) == WAKEUP_CAUSE_SHUTTING_DOWN)
+
+	// d. Block until device siganls completion of a job or shutting down
+	ret = wait_event_interruptible(mdev->wq, JOB_WAKEUP_CONDITION);
+	// Spurious; we shouldn't have woken up
+	if (ret)
 		return -ERESTARTSYS;
-	if (atomic_read(&mdev->shutting_down)) // Not spurious, but we're shutting down
+	if (wakeup_cause == WAKEUP_CAUSE_CMD_DONE)
+		return -ERESTARTSYS;
+
+	// Shutting down
+	if (wakeup_cause == WAKEUP_CAUSE_SHUTTING_DOWN)
 		return -ENODEV;
 
+	// An error has occured
+	if (wakeup_cause == WAKEUP_CAUSE_ERROR)
+		return -EIO;
+
 	// e. Read result back and write into userspace struct
-	ret = mathaccel_consume_one_cmd(mdev, ret, &kernel_req);
+	BUG_ON(wakeup_cause != WAKEUP_CAUSE_JOB_DONE);
+	ret = mathaccel_consume_one_cmd(mdev, res_index, &kernel_req);
 	if (ret < 0)
 		return ret;
+	pr_info(MATHACCEL_DRIVER_NAME ": after computation: kernel request (OP: %d, ARG1: %d, ARG2: %d, res: %lld, cmd_id: %d)\n",
+			kernel_req.opcode, kernel_req.args[0], kernel_req.args[1], kernel_req.result, kernel_req.cmd_id);
 
 	// d. Copy result back to user space
 	if (copy_to_user(user_req, &kernel_req, sizeof(struct mathaccel_req)))

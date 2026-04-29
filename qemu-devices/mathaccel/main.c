@@ -1,6 +1,4 @@
-#include "common.h"
 #include "libvfio-user.h"
-#include "setup.h"
 #include <err.h>
 #include <errno.h>
 #include <stdint.h>
@@ -8,6 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "device.h"
+#include "mathaccel/include/hw.h"
+#include "setup.h"
 
 static void print_usage_exit(const char *prog_name) {
 	printf("Usage: %s <unix_socket_path>\n", prog_name);
@@ -47,7 +49,7 @@ int main(int argc, char *argv[]) {
 
 	vfu_pci_set_id(vfu_ctx, 0x1234, 0x5678, 0, 0);
 
-	setup_bars_and_irqs(vfu_ctx);
+	setup_regions_and_irqs(vfu_ctx);
 
 	setup_capabilities(vfu_ctx);
 

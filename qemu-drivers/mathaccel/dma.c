@@ -14,18 +14,20 @@ int mathaccel_init_dma(struct mathaccel_device *math_dev) {
 	// 2. Allocate the submission queue and completion queue
 	math_dev->ring_size = MATHACCEL_RINGBUFFER_SIZE;
 
-	math_dev->sq_cpu_addr = dma_alloc_coherent(model_dev,
-											   sizeof(struct math_sq_entry) * math_dev->ring_size,
-											   &math_dev->sq_dma_addr, GFP_KERNEL);
+	if (math_dev->sq_cpu_addr == NULL)
+		math_dev->sq_cpu_addr = dma_alloc_coherent(model_dev,
+												   sizeof(struct math_sq_entry) * math_dev->ring_size,
+												   &math_dev->sq_dma_addr, GFP_KERNEL);
 	if (!math_dev->sq_cpu_addr) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": error during allocation of SQ DMA memory");
 		return -ENOMEM;
 	}
 	pr_info(MATHACCEL_DRIVER_NAME ": allocated submission queue (virtual: %p, DMA: %llx)", math_dev->sq_cpu_addr, math_dev->sq_dma_addr);
 
-	math_dev->cq_cpu_addr = dma_alloc_coherent(model_dev,
-											   sizeof(struct math_cq_entry) * MATHACCEL_RINGBUFFER_SIZE,
-											   &math_dev->cq_dma_addr, GFP_KERNEL);
+	if (math_dev->cq_cpu_addr == NULL)
+		math_dev->cq_cpu_addr = dma_alloc_coherent(model_dev,
+												   sizeof(struct math_cq_entry) * MATHACCEL_RINGBUFFER_SIZE,
+												   &math_dev->cq_dma_addr, GFP_KERNEL);
 	if (!math_dev->cq_cpu_addr) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": error during allocation of CQ DMA memory");
 		dma_free_coherent(model_dev,
@@ -35,9 +37,7 @@ int mathaccel_init_dma(struct mathaccel_device *math_dev) {
 	}
 	pr_info(MATHACCEL_DRIVER_NAME ": allocated completion queue (virtual: %p, DMA: %llx)", math_dev->cq_cpu_addr, math_dev->cq_dma_addr);
 
-	spin_lock_init(&math_dev->dma_lock);
 	atomic_set(&math_dev->cmdid_counter, 1);
-	atomic_set(&math_dev->job_done, 0);
 	math_dev->sq_head = math_dev->sq_tail = 0;
 	math_dev->cq_head = math_dev->cq_tail = 0;
 

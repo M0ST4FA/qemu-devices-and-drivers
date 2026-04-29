@@ -14,7 +14,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
 
 	struct mathaccel_req req = {
 		.opcode = MATH_OP_ADD,
-		.args = {2, 4},
+		.args = {200, 100},
 	};
 
 	if (ioctl(fd, MATHACCEL_IOC_COMPUTE, &req) < 0) {

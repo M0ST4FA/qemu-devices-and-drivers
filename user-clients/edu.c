@@ -1,4 +1,3 @@
-#include "include/edu.h"
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -7,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+
+#include "pci-driver/include/edu.h"
 
 #define PATH_SIZE 255
 
@@ -31,7 +32,7 @@ int main(int argc, char **argv) {
 
 	printf("Opening file: %s\nOperation: %s\n", node_path, op);
 
-	fd = open(node_path, O_CLOEXEC | O_RDWR | O_SYNC);
+	fd = open(node_path, O_EXCL | O_RDWR | O_SYNC);
 	if (fd < 0)
 		err(EXIT_FAILURE, "open: %s\n", strerror(errno));
 

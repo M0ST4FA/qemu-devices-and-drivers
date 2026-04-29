@@ -4,10 +4,11 @@
 #include <alloca.h>
 #include <assert.h>
 #include <err.h>
-#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/errno.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 // Read next command from submission queue
 int dma_read_next(struct vfu_ctx *ctx, struct math_sq_entry *cmd) {
@@ -15,6 +16,7 @@ int dma_read_next(struct vfu_ctx *ctx, struct math_sq_entry *cmd) {
 	int ret = 0;
 
 	if (state->sq_head == state->sq_tail) {
+		printf("[HW:DMA] Submission queue is empty\n");
 		return -EAGAIN;
 	}
 
@@ -49,11 +51,6 @@ int dma_read_next(struct vfu_ctx *ctx, struct math_sq_entry *cmd) {
 int dma_write_next(struct vfu_ctx *ctx, struct math_cq_entry *res) {
 	struct math_device *state = vfu_get_private(ctx);
 	int ret = 0;
-
-	if (state->cq_base_addr == NULL) {
-		printf("[HW:DMA] No completion queue has been allocated!\n");
-		return -ENOMEM;
-	};
 
 	// 1. Calculate the Guest Physical Address (GPA) of the current result
 	vfu_dma_addr_t gpa = state->cq_base_addr + (state->cq_tail * sizeof(struct math_sq_entry));

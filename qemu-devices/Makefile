@@ -2,7 +2,6 @@ ROOT_DIR := $(abspath .)
 LIBVFIO_INC := ${ROOT_DIR}/libvfio-user/include
 LIBVFIO_LIB := ${ROOT_DIR}/libvfio-user/build/lib
 
-# BUILD_DIR := ${ROOT_DIR}/build
 CFLAGS += -I${LIBVFIO_INC}
 LDFLAGS += -L${LIBVFIO_LIB} -lvfio-user -Wl,-rpath=${LIBVFIO_LIB}
 
@@ -17,11 +16,12 @@ TARGET_DEVICES := $(if ${SUB_TARGETS},$(filter ${SUB_TARGETS},${ALL_DEVICES}),${
 all: ${TARGET_DEVICES}
 
 ${ALL_DEVICES}:
+	@mkdir -p ${BUILD_DIR}
 	@echo "==> Building device: $@"
-	$(MAKE) BUILD_DIR=${BUILD_DIR} -C $@ 
+	$(MAKE) BUILD_DIR=${BUILD_DIR} -C $@
 
 clean:
 	@for dir in ${TARGET_DEVICES}; do \
 		echo "==> Cleaning device: $${dir}"; \
-		$(MAKE) BUILD_DIR=${BUILD_DIR} -C $${dir} clean; \
+		rm -rf ${BUILD_DIR}/$${dir}/* \
 	done

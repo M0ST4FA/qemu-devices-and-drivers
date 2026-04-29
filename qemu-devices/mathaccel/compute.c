@@ -3,7 +3,7 @@
 #include "dma.h"
 #include "fsm.h"
 #include "libvfio-user.h"
-#include <errno.h>
+#include <sys/errno.h>
 
 int consume_submission_queue(struct vfu_ctx *ctx) {
 	// struct math_device_state *state = vfu_get_private(ctx);

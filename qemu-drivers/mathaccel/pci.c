@@ -75,7 +75,8 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 
 	// 4. Configure device
 	int flags = readl(math_dev->bar[0] + REG_FLAGS);
-	flags |= FLAG_INT_ENABLED;
+	flags |= (FLAG_INT_ENABLED | FLAG_DMA_ENABLED);
+	pci_set_master(pdev);
 	writel(flags, math_dev->bar[0] + REG_FLAGS);
 
 	return 0;

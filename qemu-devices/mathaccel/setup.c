@@ -1,14 +1,12 @@
 #include "setup.h"
 #include "bar.h"
-#include "common.h"
-#include "dma.h"
 #include "fsm.h"
 #include "libvfio-user.h"
 #include <err.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/errno.h>
 
 static struct msicap msi_cap = {
 	.hdr.id = PCI_CAP_ID_MSI,

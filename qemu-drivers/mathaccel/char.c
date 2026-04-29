@@ -1,4 +1,5 @@
 #include "asm-generic/errno-base.h"
+#include "asm-generic/ioctl.h"
 #include "asm/current.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
@@ -10,11 +11,13 @@
 #include "linux/sched/signal.h"
 #include "linux/spinlock.h"
 #include "linux/types.h"
+#include "linux/uaccess.h"
 #include "linux/wait.h"
 #include <linux/atomic.h>
 
 #include "char.h"
 #include "device.h"
+#include "uapi.h"
 
 #define BUF_SIZE 64
 
@@ -93,15 +96,15 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		prepare_to_wait(&mdev->wq, &waitq_entry, TASK_INTERRUPTIBLE);
 
 		// 2. Check and assume atomically
-		spin_lock(&mdev->lock);
+		spin_lock(&mdev->legacy_cmd_lock);
 		if (mdev->done) {
 			res = mdev->result;
 			mdev->done = 0;
-			spin_unlock(&mdev->lock);
+			spin_unlock(&mdev->legacy_cmd_lock);
 			atomic_inc(&mdev->counter);
 			break;
 		}
-		spin_unlock(&mdev->lock);
+		spin_unlock(&mdev->legacy_cmd_lock);
 
 		// 3. Handle signals
 		if (signal_pending(current)) {
@@ -138,6 +141,66 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 	return ret;
 }
 
+static ssize_t mathaccel_ioc_compute(struct mathaccel_device *mdev, struct mathaccel_req __user *user_req) {
+	int ret = 0;
+	struct mathaccel_req kernel_req;
+
+	// a. Copy request from userspace
+	if (copy_from_user(&kernel_req, user_req, sizeof(struct mathaccel_req)))
+		return -EFAULT;
+
+	// b. Validate input before touching hardware
+	if (kernel_req.opcode >= MATH_OP_COUNT)
+		return -EINVAL;
+
+	// c. Write command into submission queue
+	ret = mathaccel_submit_one_cmd(mdev, &kernel_req);
+	if (ret < 0)
+		return ret;
+	mathaccel_start_dma_job(mdev);
+
+	// d. Block until device siganls completion
+	ret = wait_event_interruptible(mdev->wq, atomic_read(&mdev->job_done) || atomic_read(&mdev->shutting_down));
+	if (ret) // Spurious
+		return -ERESTARTSYS;
+	if (atomic_read(&mdev->shutting_down)) // Not spurious, but we're shutting down
+		return -ENODEV;
+
+	// e. Read result back and write into userspace struct
+	ret = mathaccel_consume_one_cmd(mdev, ret, &kernel_req);
+	if (ret < 0)
+		return ret;
+
+	// d. Copy result back to user space
+	if (copy_to_user(user_req, &kernel_req, sizeof(struct mathaccel_req)))
+		return -EFAULT;
+
+	return 0;
+};
+
+static ssize_t mathaccel_device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+	struct mathaccel_device *mdev = filp->private_data;
+	int ret = 0;
+
+	if (!mdev)
+		return -ENODEV;
+
+	// 1. Reject command types that are not ours (kernel encodes a bunch of stuff in cmd)
+	if (_IOC_TYPE(cmd) != MATHACCEL_IOC_MAGIC)
+		return -ENOTTY; // Standard response for this case: ENOTTY = wrong ioctl for this device
+
+	// 2. Switch behavior depending on command
+	switch (cmd) {
+		case MATHACCEL_IOC_COMPUTE:
+			return mathaccel_ioc_compute(mdev, (struct mathaccel_req __user *)arg);
+
+		default:
+			return -ENOTTY;
+	}
+
+	return ret;
+};
+
 struct file_operations mathaccel_fops = {
 	.owner = &__this_module,
 
@@ -146,4 +209,5 @@ struct file_operations mathaccel_fops = {
 
 	.write = mathaccel_device_write,
 	.read = mathaccel_device_read,
+	.unlocked_ioctl = mathaccel_device_ioctl,
 };

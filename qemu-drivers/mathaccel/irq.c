@@ -1,5 +1,7 @@
 #include "device.h"
+#include "linux/atomic/atomic-instrumented.h"
 #include "linux/irqreturn.h"
+#include "linux/spinlock.h"
 
 #include "irq.h"
 
@@ -31,6 +33,8 @@ void mathaccel_irq_handle_error(struct mathaccel_device *dev) {
 	ret = pci_reset_bus(dev->pdev);
 	if (!ret)
 		pr_info(MATHACCEL_DRIVER_NAME ":\t\tfailed to reset bus (critical error)! code: %d", ret);
+
+	wake_up(&dev->wq);
 };
 
 void mathaccel_irq_read_legacy_cmd_result(struct mathaccel_device *dev) {
@@ -38,17 +42,18 @@ void mathaccel_irq_read_legacy_cmd_result(struct mathaccel_device *dev) {
 
 	number = readl(dev->bar[0] + REG_ARG1);
 
-	spin_lock(&dev->lock);
+	spin_lock(&dev->legacy_cmd_lock);
 	dev->result = number;
 	// Set the condition variable
 	dev->done = 1;
-	spin_unlock(&dev->lock);
+	spin_unlock(&dev->legacy_cmd_lock);
 
 	wake_up(&dev->wq);
 };
 
 void mathaccel_irq_consume_completion_queue(struct mathaccel_device *dev) {
-
+	atomic_set(&dev->job_done, 1);
+	wake_up(&dev->wq);
 };
 
 irqreturn_t mathaccel_irq_handler(int irq, void *cookie) {

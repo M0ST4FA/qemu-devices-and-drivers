@@ -3,20 +3,24 @@ CC := gcc
 PROJ_PATH := /home/m0st4fa/workspace/kernel/experiments/devices
 BUILD_DIR := ${PROJ_PATH}/build/user-clients
 
-CFLAGS += -Wall -pedantic -std=c23 -g -Og -I${PROJ_PATH}/qemu-drivers
+CFLAGS += -Wall -pedantic -std=c23 -g -Og -D_GNU_SOURCE -D_XOPEN_SOURCE -lm -pthread -I${PROJ_PATH}/qemu-drivers
 LDFLAGS +=
 
-TARGETS := $(edu mathaccel)
+TARGETS := edu mathaccel concurrency-hammer
 
 .PHONY: all clean ${TARGETS}
 
-all: mathaccel edu
+all: ${TARGETS}
 
 edu: edu.c
 	@mkdir -p ${BUILD_DIR}
 	${CC} ${CFLAGS} -o ${BUILD_DIR}/$@ $< ${LDFLAGS}
 
 mathaccel: mathaccel.c
+	@mkdir -p ${BUILD_DIR}
+	${CC} ${CFLAGS} -o ${BUILD_DIR}/$@ $< ${LDFLAGS}
+
+concurrency-hammer: concurrency-hammer.c
 	@mkdir -p ${BUILD_DIR}
 	${CC} ${CFLAGS} -o ${BUILD_DIR}/$@ $< ${LDFLAGS}
 

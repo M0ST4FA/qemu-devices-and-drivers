@@ -1,4 +1,3 @@
-#include "char.h"
 #include "device.h"
 #include "linux/device/class.h"
 #include "linux/fs.h"

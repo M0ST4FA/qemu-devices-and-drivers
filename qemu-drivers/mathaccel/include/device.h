@@ -73,6 +73,7 @@ struct mathaccel_device {
 int mathaccel_device_init(struct pci_dev *pdev);
 void mathaccel_device_destroy(struct mathaccel_device *math_dev);
 
+int mathaccel_completion_entry_valid(struct mathaccel_device *math_dev, int index);
 int mathaccel_submit_one_cmd(struct mathaccel_device *math_dev, struct mathaccel_req *req);
 int mathaccel_consume_one_cmd(struct mathaccel_device *math_dev, int index, struct mathaccel_req *req);
 static inline void mathaccel_start_dma_job(struct mathaccel_device *math_dev) {

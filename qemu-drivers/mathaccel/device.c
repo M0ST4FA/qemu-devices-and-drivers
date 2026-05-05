@@ -125,9 +125,24 @@ int mathaccel_submit_one_cmd(struct mathaccel_device *math_dev, struct mathaccel
 	math_dev->sq_tail = (math_dev->sq_tail + 1) % math_dev->ring_size;
 
 	spin_unlock(&math_dev->dma_lock);
-	return sq_tail; // Index
+	return sq_tail % math_dev->ring_size; // Index
 };
 
+int mathaccel_completion_entry_valid(struct mathaccel_device *math_dev, int index) {
+	int valid = 0;
+
+	if (index >= math_dev->ring_size)
+		return 0;
+
+	struct math_cq_entry *entry = &math_dev->cq_cpu_addr[index];
+	valid = READ_ONCE(entry->valid);
+
+	return valid;
+}
+
+/* Consumes a command from the completion queue
+ * @returns 0 in case of success, 1 in case of spurious (completion entry is not valid), and < 0 in case of error
+ * */
 int mathaccel_consume_one_cmd(struct mathaccel_device *math_dev, int index, struct mathaccel_req *req) {
 	int ret = 0;
 
@@ -138,8 +153,14 @@ int mathaccel_consume_one_cmd(struct mathaccel_device *math_dev, int index, stru
 
 	spin_lock(&math_dev->dma_lock);
 	struct math_cq_entry *entry = &math_dev->cq_cpu_addr[index];
-	if (entry->cmd_id != req->cmd_id) {
+	if (!entry->valid) {
 		ret = -EINVAL;
+		pr_alert(MATHACCEL_DRIVER_NAME ": mathaccel_consume_one_cmd: Entry at index %d not valid",
+				 index);
+		goto error;
+	}
+	if (entry->cmd_id != req->cmd_id) {
+		ret = -EBADRQC;
 		pr_alert(MATHACCEL_DRIVER_NAME ": mathaccel_consume_one_cmd: command ID of completion entry (%d) and request (%d) don't match",
 				 entry->cmd_id, req->cmd_id);
 		goto error;

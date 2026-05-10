@@ -12,7 +12,7 @@ INITRD_PATH=$WS/kernel/artifacts/images/initramfs-amd64.cpio
 ROOTFS_FLAGS="rootdelay=10 rootfstype=btrfs rootflags=subvol=/gentoo,device=/dev/vda,device=/dev/vdb,device=/dev/vdc"
 
 if [[ $1 == "debug" ]]; then
-	DEBUG_FLAGS="-s"
+	DEBUG_FLAGS="-s -S"
 else
 	DEBUG_FLAGS=""
 fi

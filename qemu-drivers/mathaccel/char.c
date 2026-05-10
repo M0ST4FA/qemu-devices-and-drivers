@@ -2,6 +2,7 @@
 #include "asm-generic/ioctl.h"
 #include "asm/current.h"
 #include "linux/cdev.h"
+#include "linux/completion.h"
 #include "linux/container_of.h"
 #include "linux/errno.h"
 #include "linux/fs.h"
@@ -16,6 +17,7 @@
 
 #include "char.h"
 #include "device.h"
+#include "linux/xarray.h"
 #include "uapi.h"
 
 #define BUF_SIZE 64
@@ -51,16 +53,13 @@ static ssize_t mathaccel_device_write(struct file *filp, const char __user *user
 
 	buf[n] = '\0';
 
-	if (buf[n - 1] == '\n')
+	if (n > 0 && buf[n - 1] == '\n')
 		buf[n - 1] = '\0';
 
 	if ((ret = kstrtou32(buf, 10, &number))) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": failed to convert from string input (%s) to integer", buf);
 		return ret;
 	}
-
-	if (atomic_read_acquire(&math_dev->wakeup_cause) == WAKEUP_CAUSE_SHUTTING_DOWN)
-		return -ENODEV;
 
 	writel(number, math_dev->bar[0] + REG_ARG1);
 	writel(2, math_dev->bar[0] + REG_ARG2);
@@ -92,19 +91,19 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 
 	do {
 		// 1. Add myself to waitq
-		prepare_to_wait(&mdev->wq, &waitq_entry, TASK_INTERRUPTIBLE);
+		prepare_to_wait(&mdev->legacy_q, &waitq_entry, TASK_INTERRUPTIBLE);
 
 		// NOTE: in 2, we do compxchg to make sure only one consumer consumes the result
 
-		// 2a. Check whether we woke up because of an error
-		if (atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_ERROR, 0) == WAKEUP_CAUSE_ERROR) {
+		// 2a. Check whether we woke up because of a device error
+		if (atomic_read_acquire(&mdev->legacy_comp_cause) == COMPLETION_CAUSE_ERROR) {
 			ret = -EIO;
 			break;
 		};
 
 		// 2b. Check whether we woke up because a result is there
-		if (atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_CMD_DONE, 0) == WAKEUP_CAUSE_CMD_DONE) {
-			res = mdev->result;
+		if (atomic_cmpxchg(&mdev->legacy_comp_cause, COMPLETION_CAUSE_CMD_DONE, 0) == WAKEUP_CAUSE_CMD_DONE) {
+			res = mdev->legacy_res;
 			atomic_inc(&mdev->counter);
 			break;
 		}
@@ -117,7 +116,7 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 
 		// 4. Check shutdown state
 		// NOTE: We do not reset this to 0 (via compxchg) to make sure that all wakers see it
-		if (atomic_read_acquire(&mdev->wakeup_cause) == WAKEUP_CAUSE_SHUTTING_DOWN) {
+		if (atomic_read_acquire(&mdev->legacy_comp_cause) == COMPLETION_CAUSE_SHUTTING_DOWN) {
 			ret = -ENODEV;
 			break;
 		}
@@ -126,7 +125,7 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 
 	} while (1);
 	// Remove yourself from the waitq and check errors
-	finish_wait(&mdev->wq, &waitq_entry); // Remove from waitq
+	finish_wait(mdev->completion_wq, &waitq_entry); // Remove from waitq
 	if (ret < 0)
 		return ret;
 
@@ -148,7 +147,8 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 
 static ssize_t mathaccel_ioc_compute(struct mathaccel_device *mdev, struct mathaccel_req __user *user_req) {
 	int ret = 0, res_index;
-	enum wakeup_cause wakeup_cause;
+	enum completion_cause wakeup_cause;
+	struct mathaccel_pending *pending = NULL;
 	struct mathaccel_req kernel_req;
 
 	// a. Copy request from userspace
@@ -159,50 +159,64 @@ static ssize_t mathaccel_ioc_compute(struct mathaccel_device *mdev, struct matha
 	if (kernel_req.opcode >= MATH_OP_COUNT)
 		return -EINVAL;
 
-	// c. Give the command an ID and write it into submission queue
+	// c. Give the command an ID, create a pending request for it, and write it into submission queue
 	kernel_req.cmd_id = atomic_inc_return(&mdev->cmdid_counter);
+
+	//  Create pending request
+	pending = kzalloc(sizeof(*pending), GFP_KERNEL);
+	init_completion(&pending->done);
+	pending->cmd_id = kernel_req.cmd_id;
+	pending->req = kernel_req;
+	ret = xa_err(xa_store(&mdev->pending_submissions, pending->cmd_id, pending, GFP_KERNEL));
+	if (ret != 0) {
+		pr_info("%s: error creating pending submission\n", mdev->name);
+		goto error;
+	}
+
 	res_index = ret = mathaccel_submit_one_cmd(mdev, &kernel_req);
 	if (ret < 0)
-		return ret;
-
-	pr_info(MATHACCEL_DRIVER_NAME ": before computation: kernel request (OP: %d, ARG1: %d, ARG2: %d, cmd_id: %d), user_req: %p\n",
-			kernel_req.opcode, kernel_req.args[0], kernel_req.args[1], kernel_req.cmd_id, user_req);
+		goto error;
 
 	mathaccel_start_dma_job(mdev);
 
-#define JOB_WAKEUP_CONDITION (((wakeup_cause = atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_JOB_DONE, 0)) == WAKEUP_CAUSE_JOB_DONE) || \
-							  ((wakeup_cause = atomic_cmpxchg(&mdev->wakeup_cause, WAKEUP_CAUSE_ERROR, 0)) == WAKEUP_CAUSE_ERROR) ||       \
-							  (wakeup_cause = atomic_read_acquire(&mdev->wakeup_cause)) == WAKEUP_CAUSE_SHUTTING_DOWN)
-
 	// d. Block until device siganls completion of a job or shutting down
-	ret = wait_event_interruptible(mdev->wq, JOB_WAKEUP_CONDITION);
+	ret = wait_for_completion_interruptible(&pending->done);
+
 	// Spurious; we shouldn't have woken up
-	if (ret)
-		return -ERESTARTSYS;
-	if (wakeup_cause == WAKEUP_CAUSE_CMD_DONE)
-		return -ERESTARTSYS;
+	if (ret || wakeup_cause == WAKEUP_CAUSE_CMD_DONE) {
+		ret = -ERESTARTSYS;
+		goto error;
+	}
 
 	// Shutting down
-	if (wakeup_cause == WAKEUP_CAUSE_SHUTTING_DOWN)
-		return -ENODEV;
+	if (wakeup_cause == WAKEUP_CAUSE_SHUTTING_DOWN) {
+		ret = -ENODEV;
+		goto error;
+	}
 
 	// An error has occured
-	if (wakeup_cause == WAKEUP_CAUSE_ERROR)
-		return -EIO;
+	if (wakeup_cause == WAKEUP_CAUSE_ERROR) {
+		ret = -EIO;
+		goto error;
+	}
 
-	// e. Read result back and write into userspace struct
-	BUG_ON(wakeup_cause != WAKEUP_CAUSE_JOB_DONE);
-	ret = mathaccel_consume_one_cmd(mdev, res_index, &kernel_req);
-	if (ret < 0)
-		return ret;
-	pr_info(MATHACCEL_DRIVER_NAME ": after computation: kernel request (OP: %d, ARG1: %d, ARG2: %d, res: %lld, cmd_id: %d)\n",
-			kernel_req.opcode, kernel_req.args[0], kernel_req.args[1], kernel_req.result, kernel_req.cmd_id);
+	// e. Copy result back to user space; result is asynchronously copied into `pending` by irq handler
+	ret = xa_err(xa_erase(&mdev->pending_submissions, kernel_req.cmd_id));
+	if (ret != 0) {
+		pr_info("%s: error while erasing pending submission\n", mdev->name);
+		goto error;
+	}
+	if (copy_to_user(user_req, &pending->req, sizeof(struct mathaccel_req))) {
+		ret = -EFAULT;
+		goto error;
+	}
 
-	// d. Copy result back to user space
-	if (copy_to_user(user_req, &kernel_req, sizeof(struct mathaccel_req)))
-		return -EFAULT;
-
+	kfree(pending);
 	return 0;
+
+error:
+	kfree(pending);
+	return ret;
 };
 
 static ssize_t mathaccel_device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {

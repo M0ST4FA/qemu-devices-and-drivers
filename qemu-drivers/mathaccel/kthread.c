@@ -1,4 +1,5 @@
 #include "kthread.h"
+#include "hw.h"
 #include "linux/printk.h"
 #include "linux/sched.h"
 #include "linux/sched/signal.h"
@@ -31,12 +32,9 @@ static int kthread_main(void *data) {
 			if (kthread_should_stop())
 				break;
 
-			irq_cause = dev->irq_cause;
-			if (irq_cause != IRQ_CAUSE_NOIRQ) {
-				// NOTE: Do not modify the local irq_cause variable (only dev->irq_cause)
-				dev->irq_cause = IRQ_CAUSE_NOIRQ;
+			irq_cause = atomic_xchg(&dev->irq_cause, IRQ_CAUSE_NOIRQ);
+			if (irq_cause != IRQ_CAUSE_NOIRQ)
 				break;
-			}
 
 			schedule();
 		} while (1);

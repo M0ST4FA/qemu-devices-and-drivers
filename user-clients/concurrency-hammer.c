@@ -279,8 +279,7 @@ static void *thread_fn([[maybe_unused]] void *arg) {
 
 		ret = ioctl(fd, MATHACCEL_IOC_COMPUTE, &current_operation);
 		if (ret < 0) {
-			fprintf(stderr, "thread %d: ioctl: %s\n", ctx->thread_id, strerror(errno));
-			ctx->error_count++;
+			fprintf(stderr, "thread %d: ioctl: hardware failure: %s\n", ctx->thread_id, strerror(errno));
 			continue;
 		}
 

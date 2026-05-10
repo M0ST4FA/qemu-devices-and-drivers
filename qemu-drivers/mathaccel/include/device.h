@@ -1,12 +1,14 @@
 #pragma once
 
 #include "linux/cdev.h"
+#include "linux/completion.h"
 #include "linux/device.h"
 #include "linux/pci.h"
 #include "linux/spinlock.h"
 #include "linux/spinlock_types.h"
 #include "linux/types.h"
 #include "linux/wait.h"
+#include "linux/xarray.h"
 
 #define MATHACCEL_DRIVER_NAME "mathaccel"
 #define MATHACCEL_DEVICE_ID 0x1234
@@ -18,12 +20,19 @@
 #include "hw.h"
 #include "uapi.h"
 
-enum wakeup_cause : uint32_t {
-	WAKEUP_CAUSE_JOB_DONE = (1 << 0),
-	WAKEUP_CAUSE_CMD_DONE = (1 << 1),
-	WAKEUP_CAUSE_ERROR = (1 << 2),
+enum completion_cause : uint32_t {
+	COMPLETION_CAUSE_JOB_DONE = (1 << 0),
+	COMPLETION_CAUSE_CMD_DONE = (1 << 1),
+	COMPLETION_CAUSE_ERROR = (1 << 2),
 
-	WAKEUP_CAUSE_SHUTTING_DOWN = (1 << 30),
+	COMPLETION_CAUSE_SHUTTING_DOWN = (1 << 30),
+};
+
+struct mathaccel_pending {
+	u32 cmd_id;
+	struct completion done;
+	struct mathaccel_req req;
+	enum completion_cause cause;
 };
 
 struct mathaccel_device {
@@ -34,18 +43,17 @@ struct mathaccel_device {
 	struct cdev cdev;		  // Associated character subsystem device
 	int minor;
 	char name[64];
-	atomic_t wakeup_cause; // Wakeup cause for
 
 	// Resources
 	void *__iomem bar[1]; // Cached PCI base address registers
 
 	// Interrupt-driven IO support and caching
-	struct spinlock legacy_cmd_lock; // Protects `result` and `done`
-	enum irq_cause irq_cause;		 // Cached irq_cause for kthread
-	struct wait_queue_head wq;		 // Wait queue for processes (interrupt-driven IO)
+	atomic_t irq_cause; // Cached irq_cause for kthread
 	struct task_struct *kthread;
 	struct wait_queue_head kthread_wq; // Wait queue for kthreads (threaded interrupts)
-	s64 result;						   // Cached result of legacy command mode
+	struct wait_queue_head legacy_q;
+	atomic_t legacy_comp_cause;
+	s64 legacy_res;
 
 	atomic_t counter; // Counts number of accesses
 
@@ -59,6 +67,8 @@ struct mathaccel_device {
 
 	struct math_sq_entry *sq_cpu_addr; // Queue for submitting commands
 	dma_addr_t sq_dma_addr;
+
+	struct xarray pending_submissions;
 
 	struct math_cq_entry *cq_cpu_addr; // Queue for receiving completed command results
 	dma_addr_t cq_dma_addr;
@@ -75,7 +85,6 @@ void mathaccel_device_destroy(struct mathaccel_device *math_dev);
 
 int mathaccel_completion_entry_valid(struct mathaccel_device *math_dev, int index);
 int mathaccel_submit_one_cmd(struct mathaccel_device *math_dev, struct mathaccel_req *req);
-int mathaccel_consume_one_cmd(struct mathaccel_device *math_dev, int index, struct mathaccel_req *req);
 static inline void mathaccel_start_dma_job(struct mathaccel_device *math_dev) {
 	// Lock to make sure noone can submit a job while we communicate with device
 	spin_lock(&math_dev->dma_lock);

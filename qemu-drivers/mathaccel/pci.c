@@ -57,13 +57,13 @@ static int mathaccel_probe(struct pci_dev *pdev, const struct pci_device_id *id_
 
 	ret = pci_alloc_irq_vectors(pdev, 1, 1, PCI_IRQ_MSI);
 	if (ret < 0) {
-		pr_alert(MATHACCEL_DRIVER_NAME ": failed to allocate irq vectors");
+		pr_alert(MATHACCEL_DRIVER_NAME ": failed to allocate irq vectors (i.e. create virtual peripheral device interrupt controller)");
 		goto error_request_irq_vec;
 	}
 
 	irq = request_irq(pci_irq_vector(pdev, 0),
 					  mathaccel_irq_handler,
-					  IRQF_SHARED, math_dev->name, math_dev);
+					  IRQF_SHARED | IRQF_NO_THREAD, math_dev->name, math_dev);
 	if (irq < 0) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": failed to allocate irq handler");
 		goto error_request_irq;
@@ -103,7 +103,9 @@ static void mathaccel_remove(struct pci_dev *pdev) {
 	// FIXME: TOCTOU bug here. Assume whe set it shutting_down after a device has already checked
 	// Solution is to store the state of the device in the struct and check it atomically
 	atomic_set_release(&math_dev->wakeup_cause, WAKEUP_CAUSE_SHUTTING_DOWN);
-	wake_up_all(&math_dev->wq);
+
+	for (int i = 0; i < math_dev->ring_size; i++)
+		wake_up_all(math_dev->completion_wq + i);
 
 	// 2. Stop device activity
 	int flags = readl(math_dev->bar[0] + REG_FLAGS);

@@ -9,6 +9,7 @@
 #include "linux/printk.h"
 #include "linux/slab.h"
 #include "linux/spinlock.h"
+#include "linux/xarray.h"
 
 struct kmem_cache *mathaccel_cache;
 struct class *mathaccel_class;
@@ -36,15 +37,15 @@ int mathaccel_device_init(struct pci_dev *pdev) {
 	math_dev->pdev = pdev;
 
 	// 2. Initialize interrupt-driven IO infrastructure
-	atomic_set(&math_dev->wakeup_cause, 0);
-	init_waitqueue_head(&math_dev->wq);
+	math_dev->ring_size = MATHACCEL_RINGBUFFER_SIZE;
+
+	xa_init(&math_dev->pending_submissions);
+
 	init_waitqueue_head(&math_dev->kthread_wq);
 
-	spin_lock_init(&math_dev->legacy_cmd_lock);
 	spin_lock_init(&math_dev->dma_lock);
 
-	math_dev->irq_cause = IRQ_CAUSE_NOIRQ;
-	math_dev->result = 0;
+	atomic_set(&math_dev->irq_cause, IRQ_CAUSE_NOIRQ);
 	atomic_set(&math_dev->counter, 0);
 
 	// xa_init_flags(&math_dev->active_submissions, XA_FLAGS_ALLOC);
@@ -106,14 +107,14 @@ int mathaccel_submit_one_cmd(struct mathaccel_device *math_dev, struct mathaccel
 	spin_lock(&math_dev->dma_lock);
 	u32 sq_head = math_dev->sq_head;
 	u32 sq_tail = math_dev->sq_tail;
+	u32 sq_next_tail = (sq_tail + 1) % math_dev->ring_size;
 
 	// Check for a full queue. We will handle blocking later
-	if ((sq_tail - sq_head) >= math_dev->ring_size) {
+	if (sq_next_tail == sq_head) { // If next tail (the one after the current) would hit the current head (this would overwrite current head)
 		spin_unlock(&math_dev->dma_lock);
 		pr_alert(MATHACCEL_DRIVER_NAME ": submission queue is full");
 		return -EBUSY;
 	}
-
 	// 2. Fill in the data
 	struct math_sq_entry *current_entry = &math_dev->sq_cpu_addr[sq_tail % math_dev->ring_size];
 	current_entry->cmd_id = req->cmd_id;
@@ -122,10 +123,10 @@ int mathaccel_submit_one_cmd(struct mathaccel_device *math_dev, struct mathaccel
 	current_entry->opcode = req->opcode;
 
 	// 3. Advance tail
-	math_dev->sq_tail = (math_dev->sq_tail + 1) % math_dev->ring_size;
+	math_dev->sq_tail = sq_next_tail;
 
 	spin_unlock(&math_dev->dma_lock);
-	return sq_tail % math_dev->ring_size; // Index
+	return sq_tail; // Index
 };
 
 int mathaccel_completion_entry_valid(struct mathaccel_device *math_dev, int index) {
@@ -139,43 +140,3 @@ int mathaccel_completion_entry_valid(struct mathaccel_device *math_dev, int inde
 
 	return valid;
 }
-
-/* Consumes a command from the completion queue
- * @returns 0 in case of success, 1 in case of spurious (completion entry is not valid), and < 0 in case of error
- * */
-int mathaccel_consume_one_cmd(struct mathaccel_device *math_dev, int index, struct mathaccel_req *req) {
-	int ret = 0;
-
-	if (index >= math_dev->ring_size) {
-		pr_alert(MATHACCEL_DRIVER_NAME ": mathaccel_consume_one_cmd: index (%d) out of range\n", index);
-		return -ERANGE;
-	}
-
-	spin_lock(&math_dev->dma_lock);
-	struct math_cq_entry *entry = &math_dev->cq_cpu_addr[index];
-	if (!entry->valid) {
-		ret = -EINVAL;
-		pr_alert(MATHACCEL_DRIVER_NAME ": mathaccel_consume_one_cmd: Entry at index %d not valid",
-				 index);
-		goto error;
-	}
-	if (entry->cmd_id != req->cmd_id) {
-		ret = -EBADRQC;
-		pr_alert(MATHACCEL_DRIVER_NAME ": mathaccel_consume_one_cmd: command ID of completion entry (%d) and request (%d) don't match",
-				 entry->cmd_id, req->cmd_id);
-		goto error;
-	}
-	req->result = entry->result;
-	req->status = entry->status;
-
-	entry->valid = 0;
-
-	// FIXME: it seems that making completion queue a ringbuffer is useless as it is accessed by index anyway
-
-	spin_unlock(&math_dev->dma_lock);
-	return 0;
-
-error:
-	spin_unlock(&math_dev->dma_lock);
-	return ret;
-};

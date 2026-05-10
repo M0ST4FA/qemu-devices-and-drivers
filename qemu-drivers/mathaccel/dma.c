@@ -12,8 +12,6 @@ int mathaccel_init_dma(struct mathaccel_device *math_dev) {
 	dma_set_mask_and_coherent(model_dev, DMA_BIT_MASK(64));
 
 	// 2. Allocate the submission queue and completion queue
-	math_dev->ring_size = MATHACCEL_RINGBUFFER_SIZE;
-
 	if (math_dev->sq_cpu_addr == NULL)
 		math_dev->sq_cpu_addr = dma_alloc_coherent(model_dev,
 												   sizeof(struct math_sq_entry) * math_dev->ring_size,

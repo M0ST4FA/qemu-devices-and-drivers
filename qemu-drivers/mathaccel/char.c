@@ -102,7 +102,7 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 		};
 
 		// 2b. Check whether we woke up because a result is there
-		if (atomic_cmpxchg(&mdev->legacy_comp_cause, COMPLETION_CAUSE_CMD_DONE, 0) == WAKEUP_CAUSE_CMD_DONE) {
+		if (atomic_cmpxchg(&mdev->legacy_comp_cause, COMPLETION_CAUSE_CMD_DONE, 0) == COMPLETION_CAUSE_CMD_DONE) {
 			res = mdev->legacy_res;
 			atomic_inc(&mdev->counter);
 			break;
@@ -125,12 +125,12 @@ static ssize_t mathaccel_device_read(struct file *filp, char __user *user_buf, s
 
 	} while (1);
 	// Remove yourself from the waitq and check errors
-	finish_wait(mdev->completion_wq, &waitq_entry); // Remove from waitq
+	finish_wait(&mdev->legacy_q, &waitq_entry); // Remove from waitq
 	if (ret < 0)
 		return ret;
 
 	pr_info(MATHACCEL_DRIVER_NAME ": [PID %d] woke up with result %llu, counter: %d",
-			current->pid, mdev->result, atomic_read(&mdev->counter));
+			current->pid, mdev->legacy_res, atomic_read(&mdev->counter));
 
 	if ((ret = snprintf(buf, BUF_SIZE, "%u\n", res)) < 0) {
 		pr_alert(MATHACCEL_DRIVER_NAME ": failed to convert math result to string");
@@ -181,21 +181,22 @@ static ssize_t mathaccel_ioc_compute(struct mathaccel_device *mdev, struct matha
 
 	// d. Block until device siganls completion of a job or shutting down
 	ret = wait_for_completion_interruptible(&pending->done);
+	wakeup_cause = pending->cause;
 
 	// Spurious; we shouldn't have woken up
-	if (ret || wakeup_cause == WAKEUP_CAUSE_CMD_DONE) {
+	if (ret || wakeup_cause == COMPLETION_CAUSE_CMD_DONE) {
 		ret = -ERESTARTSYS;
 		goto error;
 	}
 
 	// Shutting down
-	if (wakeup_cause == WAKEUP_CAUSE_SHUTTING_DOWN) {
+	if (wakeup_cause == COMPLETION_CAUSE_SHUTTING_DOWN) {
 		ret = -ENODEV;
 		goto error;
 	}
 
 	// An error has occured
-	if (wakeup_cause == WAKEUP_CAUSE_ERROR) {
+	if (wakeup_cause == COMPLETION_CAUSE_ERROR) {
 		ret = -EIO;
 		goto error;
 	}

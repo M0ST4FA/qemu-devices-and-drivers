@@ -1,0 +1,26 @@
+TARGET := $(notdir ${CURDIR})
+TARGET_DIR := ${BUILD_DIR}/${TARGET}
+
+SRCS := $(wildcard *.c)
+OBJS := $(patsubst %.c, ${TARGET_DIR}/%.o, ${SRCS})
+
+ABS := $(abspath .)
+
+CFLAGS += -std=c23 -D_GNU_SOURCE -I${ABS}/include
+LDFLAGS += -lwayland-client
+
+.PHONY: all clean
+
+all: ${TARGET_DIR}/${TARGET}
+
+${TARGET_DIR}/${TARGET}: ${OBJS}
+	@mkdir -p $(dir $@)
+	${CC} ${CFLAGS} ${LDFLAGS} -o $@ $^
+
+${TARGET_DIR}/%.o: %.c
+	@mkdir -p $(dir $@)
+	${CC} ${CFLAGS} -o $@ -c $(abspath $<)
+
+clean:
+	echo "Cleaning..."
+	rm -rf ${TARGET_DIR}

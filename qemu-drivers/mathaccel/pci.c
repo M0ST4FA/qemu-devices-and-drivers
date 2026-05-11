@@ -11,6 +11,7 @@
 #include "device.h"
 #include "dma.h"
 #include "irq.h"
+#include "linux/xarray.h"
 #include "pci.h"
 
 static const struct pci_device_id mathaccel_id_table[] = {
@@ -97,15 +98,20 @@ error_spawn_kthread:
 
 static void mathaccel_remove(struct pci_dev *pdev) {
 	struct mathaccel_device *math_dev = pci_get_drvdata(pdev);
+	long cmd_id;
+	struct mathaccel_pending *entry;
 	BUG_ON(math_dev == NULL);
 
 	// 1. Stop all consumers (kthread consuming device, and other tasks consuming buffers populated by kthread)
 	// FIXME: TOCTOU bug here. Assume whe set it shutting_down after a device has already checked
 	// Solution is to store the state of the device in the struct and check it atomically
-	atomic_set_release(&math_dev->wakeup_cause, WAKEUP_CAUSE_SHUTTING_DOWN);
+	atomic_set_release(&math_dev->legacy_comp_cause, COMPLETION_CAUSE_SHUTTING_DOWN);
 
-	for (int i = 0; i < math_dev->ring_size; i++)
-		wake_up_all(math_dev->completion_wq + i);
+	wake_up_all(&math_dev->legacy_q);
+	xa_for_each(&math_dev->pending_submissions, cmd_id, entry) {
+		entry->cause = COMPLETION_CAUSE_SHUTTING_DOWN;
+		complete(&entry->done);
+	}
 
 	// 2. Stop device activity
 	int flags = readl(math_dev->bar[0] + REG_FLAGS);

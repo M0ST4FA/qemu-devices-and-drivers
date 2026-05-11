@@ -61,14 +61,10 @@ void mathaccel_irq_read_legacy_cmd_result(struct mathaccel_device *dev) {
 
 	number = readl(dev->bar[0] + REG_ARG1);
 
-	spin_lock(&dev->legacy_spinlock);
+	dev->legacy_res = number;
+	atomic_set(&dev->legacy_comp_cause, COMPLETION_CAUSE_CMD_DONE);
 
-	dev->legacy_pending.cause = COMPLETION_CAUSE_CMD_DONE;
-	dev->legacy_pending.req.result = number;
-
-	spin_unlock(&dev->legacy_spinlock);
-
-	complete(&dev->legacy_pending.done);
+	wake_up_all(&dev->legacy_q);
 };
 
 void mathaccel_irq_consume_completion_queue(struct mathaccel_device *dev) {

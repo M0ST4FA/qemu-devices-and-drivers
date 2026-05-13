@@ -56,15 +56,7 @@ int wayland_client_init(struct wayland_client *state);
 
 void wayland_client_redraw(struct wayland_client *client_state);
 
-static inline int wayland_client_run_loop(struct wayland_client *client_state) {
-	int ret = 0;
-
-	while (1) {
-		ret = wl_display_dispatch(client_state->display);
-	}
-
-	return ret;
-}
+int wayland_client_run_loop(struct wayland_client *client_state);
 
 static inline void wayland_client_destroy(struct wayland_client *client_state) {
 	render_buffer_destroy(&client_state->render_buffer);

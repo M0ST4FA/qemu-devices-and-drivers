@@ -1,14 +1,18 @@
 #include <bits/time.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/select.h>
 #include <syscall.h>
 #include <unistd.h>
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
+#include <wayland-util.h>
 
 #include "buffer.h"
 #include "logger.h"
@@ -247,7 +251,7 @@ int wayland_client_init(struct wayland_client *client_state) {
 		.radius = 20,
 		.color = {200, 133, 134, 1},
 	};
-	client_state->ball = ball; // Compiler should do copy-elision :)
+	client_state->ball = ball;
 
 	// 5. Signal the surface is ready to be configured
 	wl_surface_commit(client_state->wl_surface);
@@ -299,4 +303,52 @@ void wayland_client_redraw(struct wayland_client *client_state) {
 	wl_surface_damage_buffer(client_state->wl_surface, 0, 0,
 							 window->current_dim.width, window->current_dim.height);
 	wl_surface_commit(client_state->wl_surface);
+}
+
+int wayland_client_run_loop(struct wayland_client *client) {
+	int ret = 0, wl_fd, nfds;
+	fd_set read_fds;
+
+	wl_fd = wl_display_get_fd(client->display);
+	nfds = wl_fd + 1;
+
+	while (1) {
+		// 1. Prepare wayland for reading AND flush any pending outgoing messages
+		while (wl_display_prepare_read(client->display)) { // read any event into the input queue
+			// If preparation fails, it means there are already events in the internal queue
+			wl_display_dispatch_pending(client->display); // dispatch messages on the input queue
+		}
+		wl_display_flush(client->display); // send any messages on the output queue
+
+		// 2. Build the fdset (must be done inside the loop as syscall destroys it)
+		FD_ZERO(&read_fds);
+		FD_SET(wl_fd, &read_fds);
+
+		// 3. Go to sleep
+		ret = select(nfds, &read_fds, NULL, NULL, NULL);
+		if (ret < 0) {
+			pr_log_libcerror(errno, "select");
+			wl_display_cancel_read(client->display);
+			return -1;
+		}
+
+		// 4. Check who has data
+		if (FD_ISSET(wl_fd, &read_fds)) {
+			// Read the data from the wl_fd into wayland queue
+			if (wl_display_read_events(client->display) < 0) {
+				pr_log("error", "Failed to read wayland events");
+				return -1;
+			}
+		} else
+			// Someone else wokeup...cancle read state
+			wl_display_cancel_read(client->display);
+
+		// 5. Dispatch our input-event handler functions
+		if (wl_display_dispatch_pending(client->display) < 0) {
+			pr_log("error", "Wayland connection closed");
+			return -1;
+		}
+	}
+
+	return 0;
 }

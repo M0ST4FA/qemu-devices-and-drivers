@@ -251,7 +251,7 @@ cleanup:
 };
 
 void wayland_client_redraw(struct wayland_client *client_state) {
-	int ret = 0;
+	int buf_idx = -1;
 	struct window *window = &client_state->window;
 	struct render_buffer *render_buffer = &client_state->render_buffer;
 
@@ -266,17 +266,17 @@ void wayland_client_redraw(struct wayland_client *client_state) {
 		window->current_dim = window->pending_dim;
 		window->flags &= ~WIN_PENDING_RESIZE;
 
-		if (render_buffer_resize(render_buffer, client_state->shm,
-								 client_state->wl_surface, window->current_dim) < 0) {
+		if (render_buffer_resize(render_buffer, client_state->shm, window->current_dim) < 0) {
 			pr_log("error", "Failed to resize render buffer");
 			return;
 		}
 	}
 
 	// 2. Render
-	ret = render_draw(&client_state->render_buffer);
-	if (ret < 0) {
+	buf_idx = render_draw(&client_state->render_buffer);
+	if (buf_idx < 0) {
 		pr_log("error", "Draw failed");
+		return; // Skip committing buffer
 	}
 
 	// 3. Request frame callback for next frame
@@ -284,9 +284,8 @@ void wayland_client_redraw(struct wayland_client *client_state) {
 	wl_callback_add_listener(client_state->frame_callback, &wl_frame_callback_listener, client_state);
 
 	// 4. Commit current frame
-	if (client_state->render_buffer.wl_buffer == NULL)
-		return;
-
+	render_buffer->buffer_busy[buf_idx] = 1;
+	wl_surface_attach(client_state->wl_surface, render_buffer->wl_buffers[buf_idx], 0, 0);
 	wl_surface_damage_buffer(client_state->wl_surface, 0, 0,
 							 window->current_dim.width, window->current_dim.height);
 	wl_surface_commit(client_state->wl_surface);

@@ -5,6 +5,7 @@
 
 #define PIXEL_BYTE_WIDTH 4
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define WL_BUFFER_NR 2
 
 struct dimensions {
 	int32_t width;
@@ -18,10 +19,12 @@ struct render_buffer {
 	struct dimensions dimensions;
 
 	struct wl_shm_pool *wl_shm_pool;
-	struct wl_buffer *wl_buffer;
+	struct wl_buffer *wl_buffers[2];
+	int buffer_busy[2];
+	int current_buffer_idx;
 };
 
 void render_buffer_init(struct render_buffer *buffer);
 int render_buffer_resize(struct render_buffer *buffer, struct wl_shm *wl_shm,
-						 struct wl_surface *wl_surface, struct dimensions new_dims);
+						 struct dimensions new_dims);
 void render_buffer_destroy(struct render_buffer *buffer);

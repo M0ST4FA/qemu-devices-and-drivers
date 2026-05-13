@@ -232,12 +232,22 @@ int wayland_client_init(struct wayland_client *client_state) {
 	xdg_toplevel_add_listener(client_state->xdg_toplevel, &xdg_toplevel_listener, client_state);
 	xdg_toplevel_set_title(client_state->xdg_toplevel, "LED");
 
-	// 4. Initialize the window and the buffer
-	client_state->window.pending_dim.width = 200;
-	client_state->window.pending_dim.height = 200;
+	// 4. Initialize the window, the buffer and the ball
+	client_state->window.pending_dim.width = 600;
+	client_state->window.pending_dim.height = 600;
 	client_state->window.flags = WIN_INITIALIZED | WIN_PENDING_RESIZE;
 
 	render_buffer_init(&client_state->render_buffer);
+
+	struct ball ball = {
+		.x = (float)client_state->window.pending_dim.width / 2,
+		.y = 0,
+		.dx = 2.5,
+		.dy = 2.5,
+		.radius = 20,
+		.color = {200, 133, 134, 1},
+	};
+	client_state->ball = ball; // Compiler should do copy-elision :)
 
 	// 5. Signal the surface is ready to be configured
 	wl_surface_commit(client_state->wl_surface);
@@ -273,7 +283,7 @@ void wayland_client_redraw(struct wayland_client *client_state) {
 	}
 
 	// 2. Render
-	buf_idx = render_draw(&client_state->render_buffer);
+	buf_idx = render_draw(client_state);
 	if (buf_idx < 0) {
 		pr_log("error", "Draw failed");
 		return; // Skip committing buffer

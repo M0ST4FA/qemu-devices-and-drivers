@@ -18,6 +18,18 @@ struct window {
 	enum window_flags flags;
 };
 
+struct ball {
+	// dimensions of the center of the ball
+	float x, y;
+	int radius;
+
+	// components of displacement
+	float dx, dy;
+
+	// ball color (RGBA)
+	uint8_t color[4];
+};
+
 struct wayland_client {
 	/* Globals */
 	struct wl_display *display;
@@ -37,6 +49,7 @@ struct wayland_client {
 	// Others
 	struct window window;
 	struct render_buffer render_buffer;
+	struct ball ball;
 };
 
 int wayland_client_init(struct wayland_client *state);

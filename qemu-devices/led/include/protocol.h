@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#define SERVER_SOCKET_NAME "ball"
+
 // enum cmd : uint8_t {
 // 	CMD_ON = (1 << 0),
 // 	CMD_OFF = (1 << 1),
@@ -15,7 +17,7 @@
 
 enum cmd : uint8_t {
 	CMD_IMPULSE = (1 << 0),
-	CMD_SET_COLOR = (1 << 0),
+	CMD_SET_COLOR = (1 << 1),
 };
 
 struct [[gnu::packed]] ball_impulse {

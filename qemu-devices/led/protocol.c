@@ -24,7 +24,7 @@ int protocol_init(struct protocol_state *protocol_state) {
 	struct sockaddr_un addr = {0};
 	addr.sun_family = AF_UNIX;
 	// We use an abstract unix-domain socket
-	strncpy(&addr.sun_path[1], "led", sizeof(addr.sun_path) - 2);
+	strncpy(&addr.sun_path[1], SERVER_SOCKET_NAME, sizeof(addr.sun_path) - 2);
 
 	ret = bind(server_fd, &addr, sizeof(addr));
 	if (ret < 0) {

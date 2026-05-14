@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <unistd.h>
 
 #include "buffer.h"
 #include "protocol.h"
@@ -43,7 +44,6 @@ struct wayland_client {
 	struct wl_shm *shm;
 	struct xdg_wm_base *xdg_wm_base;
 	struct wl_seat *wl_seat;
-	struct wl_pointer *wl_pointer;
 
 	/* Objects */
 	struct wl_surface *wl_surface;
@@ -51,10 +51,14 @@ struct wayland_client {
 	struct xdg_toplevel *xdg_toplevel;
 	struct wl_callback *frame_callback;
 
+	struct wl_pointer *wl_pointer;
+	struct wl_keyboard *wl_keyboard;
+
 	// Others
 	struct window window;
 	struct render_buffer render_buffer;
 	struct ball ball;
+	int client_fd;
 };
 
 int wayland_client_init(struct wayland_client *state);
@@ -63,23 +67,49 @@ void wayland_client_redraw(struct wayland_client *client_state);
 
 int wayland_client_run_loop(struct wayland_client *client_state, struct protocol_state *protocol_state);
 
-static inline void wayland_client_destroy(struct wayland_client *client_state) {
-	render_buffer_destroy(&client_state->render_buffer);
+static inline void wayland_client_destroy(struct wayland_client *client) {
+	render_buffer_destroy(&client->render_buffer);
 
-	if (client_state->xdg_toplevel != NULL)
-		xdg_toplevel_destroy(client_state->xdg_toplevel);
-	if (client_state->xdg_surface != NULL)
-		xdg_surface_destroy(client_state->xdg_surface);
-	if (client_state->wl_surface != NULL)
-		wl_surface_destroy(client_state->wl_surface);
-	if (client_state->xdg_wm_base != NULL)
-		xdg_wm_base_destroy(client_state->xdg_wm_base);
-	if (client_state->shm != NULL)
-		wl_shm_destroy(client_state->shm);
-	if (client_state->compositor != NULL)
-		wl_compositor_destroy(client_state->compositor);
-	if (client_state->registry != NULL)
-		wl_registry_destroy(client_state->registry);
-	if (client_state->display != NULL)
-		wl_display_disconnect(client_state->display);
+	if (client->wl_seat != NULL) {
+		wl_seat_destroy(client->wl_seat);
+		client->wl_seat = NULL;
+	}
+
+	if (client->client_fd > STDERR_FILENO) {
+		close(client->client_fd);
+		client->client_fd = -1;
+	}
+
+	if (client->xdg_toplevel != NULL) {
+		xdg_toplevel_destroy(client->xdg_toplevel);
+		client->xdg_toplevel = NULL;
+	}
+	if (client->xdg_surface != NULL) {
+		xdg_surface_destroy(client->xdg_surface);
+		client->xdg_surface = NULL;
+	}
+	if (client->wl_surface != NULL) {
+		wl_surface_destroy(client->wl_surface);
+		client->wl_surface = NULL;
+	}
+	if (client->xdg_wm_base != NULL) {
+		xdg_wm_base_destroy(client->xdg_wm_base);
+		client->xdg_wm_base = NULL;
+	}
+	if (client->shm != NULL) {
+		wl_shm_destroy(client->shm);
+		client->shm = NULL;
+	}
+	if (client->compositor != NULL) {
+		wl_compositor_destroy(client->compositor);
+		client->compositor = NULL;
+	}
+	if (client->registry != NULL) {
+		wl_registry_destroy(client->registry);
+		client->registry = NULL;
+	}
+	if (client->display != NULL) {
+		wl_display_disconnect(client->display);
+		client->display = NULL;
+	}
 }

@@ -125,7 +125,6 @@ int render_draw(struct wayland_client *client) {
 	move_ball(ball, buffer->dimensions);
 
 	// 4. Render
-	pr_log("debug", "Rendering");
 	uint8_t bg_color[4] = {114, 160, 193, 125};
 	render_clear_screen(buffer, buf_idx, bg_color);
 	render_ball(buffer, buf_idx, ball);

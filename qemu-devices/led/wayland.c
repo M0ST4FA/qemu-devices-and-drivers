@@ -2,12 +2,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <syscall.h>
 #include <unistd.h>
 #include <wayland-client-core.h>
@@ -49,12 +49,9 @@ static const struct wl_callback_listener wl_frame_callback_listener = {
 	.done = wl_callback_done_handler,
 };
 
-static const struct wl_pointer_listener wl_pointer_listener = {
-	.enter = wl_pointer_enter_handler,
-	.leave = wl_pointer_leave_handler,
-	.motion = wl_pointer_motion_handler,
-	.button = wl_pointer_button_handler,
-	.axis = wl_pointer_axis_handler,
+static const struct wl_seat_listener wl_seat_listener = {
+	.name = wl_seat_name_handler,
+	.capabilities = wl_seat_capabilities_hander,
 };
 
 // HANDLERS ====================================================
@@ -68,31 +65,28 @@ void xdg_wm_base_ping_handler([[maybe_unused]] void *data,
 void registry_global_handler(void *data, struct wl_registry *registry,
 							 uint32_t name, const char *interface,
 							 uint32_t version) {
-	struct wayland_client *state = data;
+	struct wayland_client *client = data;
 
 	if (strcmp(interface, wl_compositor_interface.name) == 0) {
-		state->compositor = wl_registry_bind(registry, name,
-											 &wl_compositor_interface,
-											 MIN(version, 6));
+		client->compositor = wl_registry_bind(registry, name,
+											  &wl_compositor_interface,
+											  MIN(version, 6));
 	} else if (strcmp(interface, wl_shm_interface.name) == 0) {
-		state->shm = wl_registry_bind(registry, name, &wl_shm_interface,
-									  MIN(version, 2));
+		client->shm = wl_registry_bind(registry, name, &wl_shm_interface,
+									   MIN(version, 2));
 	} else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
-		state->xdg_wm_base = wl_registry_bind(registry, name,
-											  &xdg_wm_base_interface,
-											  MIN(version, 7));
-		if (state->xdg_wm_base != NULL)
-			xdg_wm_base_add_listener(state->xdg_wm_base,
-									 &xdg_wm_base_listener, state);
+		client->xdg_wm_base = wl_registry_bind(registry, name,
+											   &xdg_wm_base_interface,
+											   MIN(version, 7));
+		if (client->xdg_wm_base != NULL)
+			xdg_wm_base_add_listener(client->xdg_wm_base,
+									 &xdg_wm_base_listener, client);
 	} else if (strcmp(interface, wl_seat_interface.name) == 0) {
-		state->wl_seat = wl_registry_bind(registry, name,
-										  &wl_seat_interface,
-										  MIN(version, 9));
-		if (state->wl_seat != NULL) {
-			state->wl_pointer = wl_seat_get_pointer(state->wl_seat);
-			// if (state->wl_pointer != NULL)
-			// 	wl_pointer_add_listener(state->wl_pointer, &wl_pointer_listener, state);
-		}
+		client->wl_seat = wl_registry_bind(registry, name,
+										   &wl_seat_interface,
+										   MIN(version, 9));
+		if (client->wl_seat != NULL)
+			wl_seat_add_listener(client->wl_seat, &wl_seat_listener, client);
 	}
 }
 
@@ -165,38 +159,7 @@ void wl_callback_done_handler([[maybe_unused]] void *data, struct wl_callback *w
 	wayland_client_redraw(client_state);
 };
 
-void wl_pointer_enter_handler([[maybe_unused]] void *data, struct wl_pointer *pointer,
-							  uint32_t serial, struct wl_surface *surface,
-							  wl_fixed_t x, wl_fixed_t y) {
-
-	wl_pointer_set_cursor(pointer, serial, surface, x, y);
-};
-
-void wl_pointer_leave_handler([[maybe_unused]] void *data, struct wl_pointer *pointer,
-							  uint32_t serial, struct wl_surface *surface) {
-
-};
-
-void wl_pointer_motion_handler([[maybe_unused]] void *data, struct wl_pointer *pointer,
-							   uint32_t time,
-							   wl_fixed_t x, wl_fixed_t y) {
-
-};
-void wl_pointer_button_handler(
-	void *data,
-	struct wl_pointer *pointer,
-	uint32_t serial,
-	uint32_t time,
-	uint32_t button,
-	uint32_t state) {}
-
-void wl_pointer_axis_handler(
-	void *data,
-	struct wl_pointer *pointer,
-	uint32_t time,
-	uint32_t axis,
-	wl_fixed_t value) {}
-
+// PUBLIC API ================================================================
 int wayland_client_init(struct wayland_client *client) {
 	int ret = -1;
 
@@ -254,7 +217,22 @@ int wayland_client_init(struct wayland_client *client) {
 	};
 	client->ball = ball;
 
-	// 5. Signal the surface is ready to be configured
+	// 5. Connect to the controller protocol
+	client->client_fd = socket(PF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+	if (client->client_fd < 0) {
+		pr_log_libcerror(errno, "socket(wayland_client_init)");
+		goto cleanup;
+	}
+	struct sockaddr_un addr = {0};
+	addr.sun_family = AF_UNIX;
+	strncpy(&addr.sun_path[1], SERVER_SOCKET_NAME, sizeof(addr.sun_path) - 2);
+	ret = connect(client->client_fd, &addr, sizeof(addr));
+	if (ret < 0) {
+		pr_log_libcerror(errno, "connect(wayland_client_init)");
+		goto cleanup;
+	}
+
+	// 6. Signal the surface is ready to be configured
 	wl_surface_commit(client->wl_surface);
 	wl_display_roundtrip(client->display);
 
@@ -364,6 +342,17 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 
 			if (n == sizeof(cmd)) {
 				pr_log("debug", "Received command: CMD %d", cmd.cmd);
+
+				switch (cmd.cmd) {
+					case CMD_IMPULSE:
+						client->ball.dx += cmd.data.impulse.dx;
+						client->ball.dy += cmd.data.impulse.dy;
+						break;
+					case CMD_SET_COLOR:
+						memcpy(client->ball.color, cmd.data.color, sizeof(cmd.data.color));
+						break;
+				}
+
 			} else if (n == 0) {
 				pr_log("debug", "Translator disconnected!");
 				close(connected_client_fd);

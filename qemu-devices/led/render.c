@@ -18,25 +18,30 @@ static inline int get_front_buffer_index(struct render_buffer *buffer) {
 
 static inline void move_ball(struct ball *ball, struct dimensions dim) {
 	// 1. Move ball
+	ball->dy -= ball->gravity;
+
 	ball->x += ball->dx;
 	ball->y += ball->dy;
+
+	ball->dx *= ball->friction;
+	ball->dy *= ball->friction;
 
 	// 2. Bounce off left/right walls
 	if (ball->x - ball->radius < 0) {				 // ball overflowed left wall
 		ball->x = ball->radius;						 // push the ball back by "radius" amount
-		ball->dx = -ball->dx;						 // flip direction in x axis
+		ball->dx = -ball->dx * ball->bounce;		 // flip direction in x axis
 	} else if (ball->x + ball->radius > dim.width) { // ball overflowed right wall
 		ball->x = dim.width - ball->radius;			 // push ball back
-		ball->dx = -ball->dx;						 // flip direction in x axis
+		ball->dx = -ball->dx * ball->bounce;		 // flip direction in x axis
 	}
 
 	// 3. Bounce off ground/roof
 	if (ball->y - ball->radius < 0) { // ball overflowed ground
 		ball->y = ball->radius;
-		ball->dy = -ball->dy;
+		ball->dy = -ball->dy * ball->bounce;
 	} else if (ball->y + ball->radius > dim.height) { // ball overflowed roof
 		ball->y = dim.height - ball->radius;
-		ball->dy = -ball->dy;
+		ball->dy = -ball->dy * ball->bounce;
 	}
 }
 

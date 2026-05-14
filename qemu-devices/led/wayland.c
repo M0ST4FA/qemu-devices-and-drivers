@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <syscall.h>
 #include <unistd.h>
 #include <wayland-client-core.h>
@@ -16,6 +17,7 @@
 
 #include "buffer.h"
 #include "logger.h"
+#include "protocol.h"
 #include "render.h"
 #include "wayland-internal.h"
 #include "wayland.h"
@@ -109,8 +111,8 @@ void xdg_toplevel_configure_handler([[maybe_unused]] void *data, struct xdg_topl
 	pr_log("debug", "Configure toplevel %dx%d", width, height);
 
 	if (width == 0 && height == 0) {
-		client_state->window.pending_dim.width = 200;
-		client_state->window.pending_dim.height = 200;
+		client_state->window.pending_dim.width = 600;
+		client_state->window.pending_dim.height = 400;
 		client_state->window.flags = WIN_INITIALIZED | WIN_PENDING_RESIZE;
 		return;
 	}
@@ -195,33 +197,33 @@ void wl_pointer_axis_handler(
 	uint32_t axis,
 	wl_fixed_t value) {}
 
-int wayland_client_init(struct wayland_client *client_state) {
+int wayland_client_init(struct wayland_client *client) {
 	int ret = -1;
 
 	// 1. Create display and registry (to query for global objects)
-	client_state->display = wl_display_connect(NULL);
-	if (client_state->display == NULL) {
+	client->display = wl_display_connect(NULL);
+	if (client->display == NULL) {
 		pr_log("error", "Couldn't connect to Wayland display");
 		goto cleanup;
 	}
 
 	pr_log("debug", "Connected to Wayland display");
 
-	client_state->registry = wl_display_get_registry(client_state->display);
-	if (client_state->registry == NULL) {
+	client->registry = wl_display_get_registry(client->display);
+	if (client->registry == NULL) {
 		pr_log("error", "Couldn't get Wayland registry");
 		goto cleanup;
 	}
 
-	wl_registry_add_listener(client_state->registry, &registry_listener, client_state);
+	wl_registry_add_listener(client->registry, &registry_listener, client);
 
 	// 2. Wait until event queue drains (all events the server has for the client at this moment are sent and dispatched).
-	if (wl_display_roundtrip(client_state->display) < 0) {
+	if (wl_display_roundtrip(client->display) < 0) {
 		pr_log("error", "Wayland registry roundtrip failed");
 		goto cleanup;
 	}
 
-	if (have_required_globals(client_state)) {
+	if (have_required_globals(client)) {
 		pr_log("debug", "Got all required global objects from server");
 	} else {
 		pr_log("error", "Some required global objects are not available");
@@ -229,38 +231,37 @@ int wayland_client_init(struct wayland_client *client_state) {
 	}
 
 	// 3. Create the surface (hierarchy)
-	client_state->wl_surface = wl_compositor_create_surface(client_state->compositor);
-	client_state->xdg_surface = xdg_wm_base_get_xdg_surface(client_state->xdg_wm_base, client_state->wl_surface);
-	xdg_surface_add_listener(client_state->xdg_surface, &xdg_surface_listener, client_state);
-	client_state->xdg_toplevel = xdg_surface_get_toplevel(client_state->xdg_surface);
-	xdg_toplevel_add_listener(client_state->xdg_toplevel, &xdg_toplevel_listener, client_state);
-	xdg_toplevel_set_title(client_state->xdg_toplevel, "LED");
+	client->wl_surface = wl_compositor_create_surface(client->compositor);
+	client->xdg_surface = xdg_wm_base_get_xdg_surface(client->xdg_wm_base, client->wl_surface);
+	xdg_surface_add_listener(client->xdg_surface, &xdg_surface_listener, client);
+	client->xdg_toplevel = xdg_surface_get_toplevel(client->xdg_surface);
+	xdg_toplevel_add_listener(client->xdg_toplevel, &xdg_toplevel_listener, client);
+	xdg_toplevel_set_title(client->xdg_toplevel, "LED");
 
 	// 4. Initialize the window, the buffer and the ball
-	client_state->window.pending_dim.width = 600;
-	client_state->window.pending_dim.height = 600;
-	client_state->window.flags = WIN_INITIALIZED | WIN_PENDING_RESIZE;
-
-	render_buffer_init(&client_state->render_buffer);
+	render_buffer_init(&client->render_buffer);
 
 	struct ball ball = {
-		.x = (float)client_state->window.pending_dim.width / 2,
+		.x = 300,
 		.y = 0,
-		.dx = 2.5,
-		.dy = 2.5,
+		.dx = 0,
+		.dy = 10,
+		.gravity = -0.05,
+		.friction = 0.99,
+		.bounce = 0.95,
 		.radius = 20,
 		.color = {200, 133, 134, 1},
 	};
-	client_state->ball = ball;
+	client->ball = ball;
 
 	// 5. Signal the surface is ready to be configured
-	wl_surface_commit(client_state->wl_surface);
-	wl_display_roundtrip(client_state->display);
+	wl_surface_commit(client->wl_surface);
+	wl_display_roundtrip(client->display);
 
 	return 0;
 
 cleanup:
-	wayland_client_destroy(client_state);
+	wayland_client_destroy(client);
 	return ret;
 };
 
@@ -305,12 +306,11 @@ void wayland_client_redraw(struct wayland_client *client_state) {
 	wl_surface_commit(client_state->wl_surface);
 }
 
-int wayland_client_run_loop(struct wayland_client *client) {
-	int ret = 0, wl_fd, nfds;
+int wayland_client_run_loop(struct wayland_client *client, struct protocol_state *protocol_state) {
+	int ret = 0, wl_fd, connected_client_fd = -1, nfds;
 	fd_set read_fds;
 
 	wl_fd = wl_display_get_fd(client->display);
-	nfds = wl_fd + 1;
 
 	while (1) {
 		// 1. Prepare wayland for reading AND flush any pending outgoing messages
@@ -323,6 +323,14 @@ int wayland_client_run_loop(struct wayland_client *client) {
 		// 2. Build the fdset (must be done inside the loop as syscall destroys it)
 		FD_ZERO(&read_fds);
 		FD_SET(wl_fd, &read_fds);
+		FD_SET(protocol_state->server_fd, &read_fds);
+		nfds = (protocol_state->server_fd > wl_fd ? protocol_state->server_fd : wl_fd) + 1;
+
+		if (connected_client_fd != -1) {
+			FD_SET(connected_client_fd, &read_fds);
+			if (connected_client_fd >= nfds)
+				nfds = connected_client_fd + 1;
+		}
 
 		// 3. Go to sleep
 		ret = select(nfds, &read_fds, NULL, NULL, NULL);
@@ -333,6 +341,37 @@ int wayland_client_run_loop(struct wayland_client *client) {
 		}
 
 		// 4. Check who has data
+
+		// a. Do we have a new client trying to connect?
+		if (FD_ISSET(protocol_state->server_fd, &read_fds)) {
+			int new_fd = accept4(protocol_state->server_fd, NULL, NULL, SOCK_NONBLOCK);
+			if (new_fd >= 0) {
+				pr_log("debug", "A client has connected!");
+
+				// Drop client if and old one already exists (a more sophisticated app would handle more than just 1 client at a time :))
+				if (connected_client_fd != -1) {
+					pr_log("debug", "Dropping connection to new client...we can't betray our old client :|");
+					close(new_fd);
+				} else
+					connected_client_fd = new_fd;
+			}
+		}
+
+		// b. Did we receive a new command from any of our clients?
+		if (connected_client_fd != -1 && FD_ISSET(connected_client_fd, &read_fds)) {
+			struct ball_command cmd;
+			int n = read(connected_client_fd, &cmd, sizeof(cmd));
+
+			if (n == sizeof(cmd)) {
+				pr_log("debug", "Received command: CMD %d", cmd.cmd);
+			} else if (n == 0) {
+				pr_log("debug", "Translator disconnected!");
+				close(connected_client_fd);
+				connected_client_fd = -1;
+			}
+		}
+
+		// c. Did the compositor send us any new events?
 		if (FD_ISSET(wl_fd, &read_fds)) {
 			// Read the data from the wl_fd into wayland queue
 			if (wl_display_read_events(client->display) < 0) {

@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "buffer.h"
+#include "protocol.h"
 #include "wayland-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
@@ -25,6 +26,10 @@ struct ball {
 
 	// components of displacement
 	float dx, dy;
+
+	float gravity;	// speed of deceleration in the x axis
+	float friction; // 0-1.0, velocity multiplier
+	float bounce;	// velocity loss on impact
 
 	// ball color (RGBA)
 	uint8_t color[4];
@@ -56,7 +61,7 @@ int wayland_client_init(struct wayland_client *state);
 
 void wayland_client_redraw(struct wayland_client *client_state);
 
-int wayland_client_run_loop(struct wayland_client *client_state);
+int wayland_client_run_loop(struct wayland_client *client_state, struct protocol_state *protocol_state);
 
 static inline void wayland_client_destroy(struct wayland_client *client_state) {
 	render_buffer_destroy(&client_state->render_buffer);

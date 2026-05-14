@@ -15,9 +15,6 @@
 void render_buffer_init(struct render_buffer *buffer) {
 	memset(buffer, 0, sizeof(*buffer));
 
-	buffer->dimensions.width = 200;
-	buffer->dimensions.height = 200;
-
 	buffer->current_buffer_idx = 0;
 }
 

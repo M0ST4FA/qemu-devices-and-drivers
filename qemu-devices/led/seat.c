@@ -158,6 +158,48 @@ void wl_keyboard_key_handler(void *data, struct wl_keyboard *keyboard,
 
 	if (keystate != WL_KEYBOARD_KEY_STATE_PRESSED)
 		return;
+
+	struct ball_command cmd = {0};
+
+	switch (key) {
+		case KEY_SPACE:
+			cmd.cmd = CMD_SET_COLOR;
+			cmd.data.color[0] = time % 255;
+			cmd.data.color[1] = time % 255;
+			cmd.data.color[2] = time % 255;
+			cmd.data.color[3] = 255;
+			break;
+
+		case KEY_UP:
+			[[fallthrough]];
+		case KEY_K:
+			cmd.cmd = CMD_IMPULSE;
+			cmd.data.impulse.dy = -5.0;
+			break;
+
+		case KEY_DOWN:
+			[[fallthrough]];
+		case KEY_J:
+			cmd.cmd = CMD_IMPULSE;
+			cmd.data.impulse.dy = 5.0;
+			break;
+
+		case KEY_LEFT:
+			[[fallthrough]];
+		case KEY_L:
+			cmd.cmd = CMD_IMPULSE;
+			cmd.data.impulse.dx = -5.0;
+			break;
+
+		case KEY_RIGHT:
+			[[fallthrough]];
+		case KEY_H:
+			cmd.cmd = CMD_IMPULSE;
+			cmd.data.impulse.dx = 5.0;
+			break;
+	}
+
+	write(client->client_fd, &cmd, sizeof(cmd));
 };
 
 void wl_keyboard_keymap_handler(void *data, struct wl_keyboard *keyboard, uint32_t format, int fd, uint32_t size) {

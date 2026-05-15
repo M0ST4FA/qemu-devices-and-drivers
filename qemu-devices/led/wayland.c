@@ -347,7 +347,6 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 					case CMD_IMPULSE:
 						client->ball.dx += cmd.data.impulse.dx;
 						client->ball.dy += cmd.data.impulse.dy;
-						break;
 					case CMD_SET_COLOR:
 						memcpy(client->ball.color, cmd.data.color, sizeof(cmd.data.color));
 						break;

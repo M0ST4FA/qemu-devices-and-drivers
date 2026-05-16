@@ -4,17 +4,6 @@
 
 #define SERVER_SOCKET_NAME "ball"
 
-// enum cmd : uint8_t {
-// 	CMD_ON = (1 << 0),
-// 	CMD_OFF = (1 << 1),
-// };
-//
-// struct [[gnu::packed]] led_command {
-// 	enum cmd cmd;
-// 	uint8_t led_id;
-// 	uint8_t color[4]; // RGBA
-// };
-
 enum cmd : uint8_t {
 	CMD_TOGGLE = (1 << 0),
 	CMD_ON = (1 << 1),
@@ -22,11 +11,10 @@ enum cmd : uint8_t {
 	CMD_SET_COLOR = (1 << 3),
 };
 
-struct [[gnu::packed]] led_command_toggle {
-};
-
+// Note: only the commad to set color needs data
 struct [[gnu::packed]] led_command {
 	enum cmd cmd;
+	int32_t led_id;
 	union {
 		uint8_t color[4];
 	} data;

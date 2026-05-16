@@ -38,18 +38,45 @@ void wl_seat_capabilities_hander([[maybe_unused]] void *data, struct wl_seat *wl
 	struct wayland_client *client = data;
 	pr_log("debug", "Seat capabilities:");
 
+	// POINTER
 	if (capabilities & WL_SEAT_CAPABILITY_POINTER) {
 		pr_log("debug", "\tPOINTER");
-		client->wl_pointer = wl_seat_get_pointer(wl_seat);
-		wl_pointer_add_listener(client->wl_pointer, &wl_pointer_listener, client);
+
+		if (client->wl_pointer != NULL) {
+			client->wl_pointer = wl_seat_get_pointer(wl_seat);
+			wl_pointer_add_listener(client->wl_pointer, &wl_pointer_listener, client);
+		}
+	} else if (client->wl_pointer != NULL) {
+		pr_log("debug", "Previous POINTER removed from seat");
+		wl_pointer_destroy(client->wl_pointer);
+		client->wl_pointer = NULL;
 	}
+
+	// KEYBOARD
 	if (capabilities & WL_SEAT_CAPABILITY_KEYBOARD) {
 		pr_log("debug", "\tKEYBOARD");
-		client->wl_keyboard = wl_seat_get_keyboard(wl_seat);
-		wl_keyboard_add_listener(client->wl_keyboard, &wl_keyboard_listener, client);
+
+		if (client->wl_keyboard != NULL) {
+			client->wl_keyboard = wl_seat_get_keyboard(wl_seat);
+			wl_keyboard_add_listener(client->wl_keyboard, &wl_keyboard_listener, client);
+		}
+	} else if (client->wl_keyboard != NULL) {
+		pr_log("debug", "Previous KEYBOARD removed from seat");
+		wl_keyboard_destroy(client->wl_keyboard);
+		client->wl_keyboard = NULL;
 	}
-	if (capabilities & WL_SEAT_CAPABILITY_TOUCH)
+
+	// TOUCH
+	if (capabilities & WL_SEAT_CAPABILITY_TOUCH) {
 		pr_log("debug", "\tTOUCH");
+		if (client->wl_touch != NULL) {
+			client->wl_touch = wl_seat_get_touch(wl_seat);
+		}
+	} else if (client->wl_touch != NULL) {
+		pr_log("debug", "Previous TOUCH removed from seat");
+		wl_touch_destroy(client->wl_touch);
+		client->wl_touch = NULL;
+	}
 };
 
 // POINTER
@@ -69,8 +96,8 @@ void wl_pointer_motion_handler([[maybe_unused]] void *data, struct wl_pointer *p
 							   wl_fixed_t x, wl_fixed_t y) {
 
 };
-void wl_pointer_button_handler(void *data, struct wl_pointer *pointer,
-							   uint32_t serial, uint32_t time,
+void wl_pointer_button_handler(void *data, [[maybe_unused]] struct wl_pointer *pointer,
+							   [[maybe_unused]] uint32_t serial, [[maybe_unused]] uint32_t time,
 							   uint32_t button, uint32_t state) {
 	struct wayland_client *client = data;
 

@@ -371,10 +371,36 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 		// b. Did we receive a new command from any of our clients?
 		if (connected_client_fd != -1 && FD_ISSET(connected_client_fd, &read_fds)) {
 			struct led_command cmd;
+			struct led *led = NULL;
 			int n = read(connected_client_fd, &cmd, sizeof(cmd));
 
 			if (n == sizeof(cmd)) {
-				pr_log("debug", "Received command: CMD %d", cmd.cmd);
+				pr_log("debug", "Received command: CMD %d, LED ID %d", cmd.cmd, cmd.led_id);
+
+				if (cmd.led_id < LED_NR)
+					led = &client->led_grid.leds[cmd.led_id];
+				else {
+					pr_log("debug", "Invalid LED ID: Out of range");
+					continue;
+				}
+
+				switch (cmd.cmd) {
+					case CMD_TOGGLE:
+						led->on = !led->on;
+						break;
+
+					case CMD_ON:
+						led->on = 1;
+						break;
+
+					case CMD_OFF:
+						led->on = 0;
+						break;
+
+					case CMD_SET_COLOR:
+						memcpy(led->color, cmd.data.color, sizeof(led->color));
+						break;
+				}
 			} else if (n == 0) {
 				pr_log("debug", "Translator disconnected!");
 				close(connected_client_fd);

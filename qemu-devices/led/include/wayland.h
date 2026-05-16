@@ -52,6 +52,7 @@ struct wayland_client {
 
 	struct wl_pointer *wl_pointer;
 	struct wl_keyboard *wl_keyboard;
+	struct wl_touch *wl_touch;
 
 	// Others
 	struct window window;

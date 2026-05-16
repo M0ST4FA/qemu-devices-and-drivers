@@ -18,6 +18,28 @@ static inline bool have_required_globals(const struct wayland_client *state) {
 		   state->xdg_wm_base != NULL && state->wl_seat != NULL;
 }
 
+static inline void led_grid_init(struct led_grid *led_grid) {
+	led_grid->off_color[0] = 15;
+	led_grid->off_color[1] = 18;
+	led_grid->off_color[2] = 20;
+	led_grid->off_color[3] = 255;
+
+	for (int i = 0; i < LED_NR; i++) {
+		struct led *led = &led_grid->leds[i];
+		led->color[3] = 255;
+
+		led->on = 1;
+		// Cyberpunk Cyan
+		// led->color[0] = 0;
+		// led->color[1] = 147;
+		// led->color[2] = 41;
+
+		led->color[0] = 50;
+		led->color[1] = 255;
+		led->color[2] = 100;
+	}
+}
+
 void wl_display_error_handler([[maybe_unused]] void *data, struct wl_display *display,
 							  void *object, uint32_t code, const char *message);
 void wl_display_delete_id_handler([[maybe_unused]] void *data, struct wl_display *display, uint32_t);

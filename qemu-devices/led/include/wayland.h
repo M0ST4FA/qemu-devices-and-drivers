@@ -9,6 +9,10 @@
 #include "wayland-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
+#define LED_NR 24
+#define LED_COLS 8
+#define LED_ROWS 3
+
 enum window_flags {
 	WIN_INITIALIZED = (1 << 0),
 	WIN_PENDING_RESIZE = (1 << 1),
@@ -21,20 +25,14 @@ struct window {
 	enum window_flags flags;
 };
 
-struct ball {
-	// dimensions of the center of the ball
-	float x, y;
-	int radius;
-
-	// components of displacement
-	float dx, dy;
-
-	float gravity;	// speed of deceleration in the x axis
-	float friction; // 0-1.0, velocity multiplier
-	float bounce;	// velocity loss on impact
-
-	// ball color (RGBA)
+struct led {
+	int on;
 	uint8_t color[4];
+};
+
+struct led_grid {
+	struct led leds[LED_NR];
+	uint8_t off_color[4];
 };
 
 struct wayland_client {
@@ -58,7 +56,7 @@ struct wayland_client {
 	// Others
 	struct window window;
 	struct render_buffer render_buffer;
-	struct ball ball;
+	struct led_grid led_grid;
 	int client_fd;
 };
 

@@ -16,18 +16,18 @@
 // };
 
 enum cmd : uint8_t {
-	CMD_IMPULSE = (1 << 0),
-	CMD_SET_COLOR = (1 << 1),
+	CMD_TOGGLE = (1 << 0),
+	CMD_ON = (1 << 1),
+	CMD_OFF = (1 << 2),
+	CMD_SET_COLOR = (1 << 3),
 };
 
-struct [[gnu::packed]] ball_impulse {
-	float dx, dy;
+struct [[gnu::packed]] led_command_toggle {
 };
 
-struct [[gnu::packed]] ball_command {
+struct [[gnu::packed]] led_command {
 	enum cmd cmd;
 	union {
-		struct ball_impulse impulse;
 		uint8_t color[4];
 	} data;
 };

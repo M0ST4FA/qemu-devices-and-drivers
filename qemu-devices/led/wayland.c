@@ -224,21 +224,9 @@ int wayland_client_init(struct wayland_client *client) {
 	xdg_toplevel_add_listener(client->xdg_toplevel, &xdg_toplevel_listener, client);
 	xdg_toplevel_set_title(client->xdg_toplevel, "LED");
 
-	// 4. Initialize the window, the buffer and the ball
+	// 4. Initialize the window, the buffer and the led grid
 	render_buffer_init(&client->render_buffer);
-
-	struct ball ball = {
-		.x = 300,
-		.y = 0,
-		.dx = 0,
-		.dy = 10,
-		.gravity = -0.05,
-		.friction = 0.99,
-		.bounce = 0.95,
-		.radius = 20,
-		.color = {200, 133, 134, 1},
-	};
-	client->ball = ball;
+	led_grid_init(&client->led_grid);
 
 	// 5. Connect to the controller protocol
 	client->client_fd = socket(PF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
@@ -382,22 +370,11 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 
 		// b. Did we receive a new command from any of our clients?
 		if (connected_client_fd != -1 && FD_ISSET(connected_client_fd, &read_fds)) {
-			struct ball_command cmd;
+			struct led_command cmd;
 			int n = read(connected_client_fd, &cmd, sizeof(cmd));
 
 			if (n == sizeof(cmd)) {
 				pr_log("debug", "Received command: CMD %d", cmd.cmd);
-
-				switch (cmd.cmd) {
-					case CMD_IMPULSE:
-						client->ball.dx += cmd.data.impulse.dx;
-						client->ball.dy += cmd.data.impulse.dy;
-						break;
-					case CMD_SET_COLOR:
-						memcpy(client->ball.color, cmd.data.color, sizeof(cmd.data.color));
-						break;
-				}
-
 			} else if (n == 0) {
 				pr_log("debug", "Translator disconnected!");
 				close(connected_client_fd);

@@ -86,30 +86,10 @@ void wl_pointer_button_handler(void *data, struct wl_pointer *pointer,
 
 	if (button == BTN_RIGHT) {
 		pr_log("debug", "Received right click");
-		struct ball_command cmd = {
-			.cmd = CMD_SET_COLOR,
-			.data.color = {
-				time % 255,
-				time % 255,
-				time % 255,
-				255,
-			},
-		};
-
-		write(client->client_fd, &cmd, sizeof(cmd));
 	}
 
 	if (button == BTN_LEFT) {
 		pr_log("debug", "Received left click");
-		struct ball_command cmd = {
-			.cmd = CMD_IMPULSE,
-			.data.impulse = {
-				.dx = 0,
-				.dy = -2.0,
-			},
-		};
-
-		write(client->client_fd, &cmd, sizeof(cmd));
 	}
 }
 
@@ -159,7 +139,7 @@ void wl_keyboard_key_handler(void *data, struct wl_keyboard *keyboard,
 	if (keystate != WL_KEYBOARD_KEY_STATE_PRESSED)
 		return;
 
-	struct ball_command cmd = {0};
+	struct led_command cmd = {0};
 
 	switch (key) {
 		case KEY_SPACE:
@@ -173,29 +153,21 @@ void wl_keyboard_key_handler(void *data, struct wl_keyboard *keyboard,
 		case KEY_UP:
 			[[fallthrough]];
 		case KEY_K:
-			cmd.cmd = CMD_IMPULSE;
-			cmd.data.impulse.dy = -5.0;
 			break;
 
 		case KEY_DOWN:
 			[[fallthrough]];
 		case KEY_J:
-			cmd.cmd = CMD_IMPULSE;
-			cmd.data.impulse.dy = 5.0;
 			break;
 
 		case KEY_LEFT:
 			[[fallthrough]];
 		case KEY_L:
-			cmd.cmd = CMD_IMPULSE;
-			cmd.data.impulse.dx = -5.0;
 			break;
 
 		case KEY_RIGHT:
 			[[fallthrough]];
 		case KEY_H:
-			cmd.cmd = CMD_IMPULSE;
-			cmd.data.impulse.dx = 5.0;
 			break;
 	}
 

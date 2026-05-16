@@ -1,6 +1,8 @@
 #include <bits/time.h>
+#include <bits/types/sigset_t.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,12 +21,20 @@
 #include "logger.h"
 #include "protocol.h"
 #include "render.h"
+#include "signal_setup.h"
 #include "wayland-internal.h"
 #include "wayland.h"
 #include "xdg-shell-client-protocol.h"
 
+volatile sig_atomic_t paused = 0;
+
 // LISTENERS ================================================
-static const struct wl_registry_listener registry_listener = {
+static const struct wl_display_listener wl_display_listener = {
+	.error = wl_display_error_handler,
+	.delete_id = wl_display_delete_id_handler,
+};
+
+static const struct wl_registry_listener wl_registry_listener = {
 	.global = registry_global_handler,
 	.global_remove = registry_global_remove_handler,
 };
@@ -55,6 +65,19 @@ static const struct wl_seat_listener wl_seat_listener = {
 };
 
 // HANDLERS ====================================================
+void wl_display_error_handler([[maybe_unused]] void *data, struct wl_display *display,
+							  void *object, uint32_t code, const char *message) {
+	struct wayland_client *client = data;
+
+	pr_log("error", "Fatal error has occured during processing of wayland event: %s", message);
+
+	wayland_client_destroy(client);
+	exit(EXIT_FAILURE);
+};
+void wl_display_delete_id_handler([[maybe_unused]] void *data, struct wl_display *display, uint32_t id) {
+	pr_log("debug", "Object with id %d deleted", id);
+};
+
 void xdg_wm_base_ping_handler([[maybe_unused]] void *data,
 							  struct xdg_wm_base *xdg_wm_base,
 							  uint32_t serial) {
@@ -169,6 +192,7 @@ int wayland_client_init(struct wayland_client *client) {
 		pr_log("error", "Couldn't connect to Wayland display");
 		goto cleanup;
 	}
+	wl_display_add_listener(client->display, &wl_display_listener, client);
 
 	pr_log("debug", "Connected to Wayland display");
 
@@ -177,8 +201,7 @@ int wayland_client_init(struct wayland_client *client) {
 		pr_log("error", "Couldn't get Wayland registry");
 		goto cleanup;
 	}
-
-	wl_registry_add_listener(client->registry, &registry_listener, client);
+	wl_registry_add_listener(client->registry, &wl_registry_listener, client);
 
 	// 2. Wait until event queue drains (all events the server has for the client at this moment are sent and dispatched).
 	if (wl_display_roundtrip(client->display) < 0) {
@@ -290,7 +313,13 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 
 	wl_fd = wl_display_get_fd(client->display);
 
+	sigset_t sigmask_before, sigmask_after;
+	sigfillset(&sigmask_after);
+	sigfillset(&sigmask_before);
+	sigdelset(&sigmask_before, SIGUSR1);
+
 	while (1) {
+
 		// 1. Prepare wayland for reading AND flush any pending outgoing messages
 		while (wl_display_prepare_read(client->display)) { // read any event into the input queue
 			// If preparation fails, it means there are already events in the internal queue
@@ -300,6 +329,7 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 
 		// 2. Build the fdset (must be done inside the loop as syscall destroys it)
 		FD_ZERO(&read_fds);
+		FD_SET(sigpipe[0], &read_fds);
 		FD_SET(wl_fd, &read_fds);
 		FD_SET(protocol_state->server_fd, &read_fds);
 		nfds = (protocol_state->server_fd > wl_fd ? protocol_state->server_fd : wl_fd) + 1;
@@ -311,14 +341,29 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 		}
 
 		// 3. Go to sleep
+		pthread_sigmask(SIG_SETMASK, &sigmask_before, NULL);
+
 		ret = select(nfds, &read_fds, NULL, NULL, NULL);
 		if (ret < 0) {
+			if (errno == EINTR) { // Spurious wakeup
+				pr_log("debug", "Select returned after being interrupted");
+				wl_display_cancel_read(client->display);
+				continue;
+			}
+
 			pr_log_libcerror(errno, "select");
 			wl_display_cancel_read(client->display);
 			return -1;
 		}
 
+		pthread_sigmask(SIG_SETMASK, &sigmask_after, NULL);
+
 		// 4. Check who has data
+		if (FD_ISSET(sigpipe[0], &read_fds)) {
+			pr_log("debug", "Signal handler called");
+			char buf[20] = {0};
+			read(sigpipe[0], &buf, 20);
+		}
 
 		// a. Do we have a new client trying to connect?
 		if (FD_ISSET(protocol_state->server_fd, &read_fds)) {
@@ -347,6 +392,7 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 					case CMD_IMPULSE:
 						client->ball.dx += cmd.data.impulse.dx;
 						client->ball.dy += cmd.data.impulse.dy;
+						break;
 					case CMD_SET_COLOR:
 						memcpy(client->ball.color, cmd.data.color, sizeof(cmd.data.color));
 						break;

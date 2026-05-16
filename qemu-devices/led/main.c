@@ -1,12 +1,15 @@
 #include <bits/time.h>
+#include <bits/types/sigset_t.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <sys/mman.h>
+#include <sys/ucontext.h>
 #include <syscall.h>
 #include <unistd.h>
 
 #include "logger.h"
 #include "protocol.h"
+#include "signal_setup.h"
 #include "wayland.h"
 
 int main() {
@@ -17,6 +20,11 @@ int main() {
 	ret = protocol_init(&protocol_state);
 	if (ret < 0) {
 		pr_log("error", "Failed to setup LED protocol");
+		goto cleanup;
+	}
+
+	if (setup_signal_handlers() < 0) {
+		pr_log("error", "Failed to setup signal handlers");
 		goto cleanup;
 	}
 

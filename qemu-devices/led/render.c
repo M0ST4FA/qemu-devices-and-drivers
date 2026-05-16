@@ -1,4 +1,3 @@
-#include <errno.h>
 #include <time.h>
 
 #include "buffer.h"
@@ -122,7 +121,8 @@ int render_draw(struct wayland_client *client) {
 	}
 
 	// 3. Move ball
-	move_ball(ball, buffer->dimensions);
+	if (!paused)
+		move_ball(ball, buffer->dimensions);
 
 	// 4. Render
 	uint8_t bg_color[4] = {114, 160, 193, 125};

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <signal.h>
 #include <stdint.h>
 #include <unistd.h>
 
@@ -60,6 +61,8 @@ struct wayland_client {
 	struct ball ball;
 	int client_fd;
 };
+
+extern volatile sig_atomic_t paused;
 
 int wayland_client_init(struct wayland_client *state);
 

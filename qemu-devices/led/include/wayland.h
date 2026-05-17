@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <wayland-util.h>
 
 #include "buffer.h"
 #include "protocol.h"
@@ -23,6 +24,31 @@ struct window {
 	struct dimensions current_dim;
 	struct dimensions pending_dim;
 	enum window_flags flags;
+};
+
+enum pointer_event_mask : uint32_t {
+	POINTER_EVENT_ENTER = (1 << 0),
+	POINTER_EVENT_LEAVE = (1 << 1),
+	POINTER_EVENT_MOTION = (1 << 2),
+	POINTER_EVENT_BUTTON = (1 << 3),
+	POINTER_EVENT_AXIS = (1 << 4),
+	POINTER_EVENT_AXIS_SOURCE = (1 << 5),
+	POINTER_EVENT_AXIS_STOP = (1 << 6),
+	POINTER_EVENT_AXIS_DISCRETE = (1 << 7),
+};
+
+struct pointer_event {
+	enum pointer_event_mask event_mask;
+	wl_fixed_t surface_x, surface_y;
+	uint32_t button, state;
+	uint32_t time;
+	uint32_t serial;
+	struct {
+		bool valid;
+		wl_fixed_t value;
+		int32_t discrete;
+	} axes[2];
+	uint32_t axis_source;
 };
 
 struct led {
@@ -56,6 +82,7 @@ struct wayland_client {
 
 	// Others
 	struct window window;
+	struct pointer_event pointer_event; // Last cached pointer event
 	struct render_buffer render_buffer;
 	struct led_grid led_grid;
 	int client_fd;

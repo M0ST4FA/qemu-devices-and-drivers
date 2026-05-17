@@ -1,8 +1,10 @@
 #include <linux/input-event-codes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <wayland-client-protocol.h>
 #include <wayland-util.h>
 
+#include "buffer.h"
 #include "logger.h"
 #include "protocol.h"
 #include "wayland-internal.h"
@@ -243,6 +245,47 @@ static inline void print_frame_event(struct pointer_event *event) {
 	}
 }
 
+static inline int get_underlying_led(struct wayland_client *client) {
+	struct pointer_event *event = &client->pointer_event;
+
+	if (!(event->event_mask & POINTER_EVENT_BUTTON))
+		return -1;
+
+	// 1. Calculate the column and row of the click
+	int32_t width = client->window.current_dim.width;
+	int32_t height = client->window.current_dim.height;
+
+	int32_t radius, spacing_x, spacing_y, col, row;
+	int32_t x = wl_fixed_to_int(event->surface_x),
+			y = wl_fixed_to_int(event->surface_y);
+
+	radius = width / (LED_COLS * 2);
+	spacing_x = width / LED_COLS;
+	spacing_y = height / LED_ROWS;
+
+	col = x / spacing_x;
+	row = y / spacing_y;
+
+	// 2. Determine whether we're inside that led
+	int32_t center_x, center_y, distance_x, distance_y, distance;
+	center_x = spacing_x * col + spacing_x / 2;
+	center_y = spacing_y * row + spacing_y / 2;
+
+	distance_x = (x - center_x);
+	distance_y = (y - center_y);
+	distance = (distance_x * distance_x) + (distance_y * distance_y);
+
+	if (distance > radius * radius)
+		return -1;
+
+	int index = LED_COLS * row + col;
+
+	if (index >= LED_NR)
+		return -1;
+
+	return index;
+}
+
 void wl_pointer_frame_handler(void *data, struct wl_pointer *wl_pointer) {
 	struct wayland_client *client = data;
 	struct pointer_event *event = &client->pointer_event;
@@ -262,10 +305,35 @@ void wl_pointer_frame_handler(void *data, struct wl_pointer *wl_pointer) {
 
 	if (event->button == BTN_RIGHT) {
 		pr_log("debug", "Received right click");
+		int index = get_underlying_led(client);
+
+		struct led_command cmd;
+		cmd.cmd = CMD_SET_COLOR;
+		cmd.led_id = index;
+		cmd.data.color[0] = rand() % 255;
+		cmd.data.color[1] = rand() % 255;
+		cmd.data.color[2] = rand() % 255;
+		cmd.data.color[3] = 255;
+
+		if (index < 0)
+			pr_log("debug", "No LED under pointer");
+		else
+			write(client->client_fd, &cmd, sizeof(cmd));
 	}
 
 	if (event->button == BTN_LEFT) {
 		pr_log("debug", "Received left click");
+		int index = get_underlying_led(client);
+
+		struct led_command cmd;
+		cmd.cmd = CMD_TOGGLE;
+		cmd.led_id = index;
+
+		if (index < 0)
+			pr_log("debug", "No LED under pointer");
+
+		else
+			write(client->client_fd, &cmd, sizeof(cmd));
 	}
 }
 

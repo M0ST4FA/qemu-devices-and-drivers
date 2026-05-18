@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#define SERVER_SOCKET_NAME "ball"
+#define SERVER_SOCKET_NAME "led_grid"
 
 enum cmd : uint8_t {
 	CMD_TOGGLE = (1 << 0),

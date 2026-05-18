@@ -301,11 +301,6 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 
 	wl_fd = wl_display_get_fd(client->display);
 
-	sigset_t sigmask_before, sigmask_after;
-	sigfillset(&sigmask_after);
-	sigfillset(&sigmask_before);
-	sigdelset(&sigmask_before, SIGUSR1);
-
 	while (1) {
 
 		// 1. Prepare wayland for reading AND flush any pending outgoing messages
@@ -329,9 +324,10 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 		}
 
 		// 3. Go to sleep
-		pthread_sigmask(SIG_SETMASK, &sigmask_before, NULL);
+		sigset_t orig_mask;
+		pthread_sigmask(SIG_SETMASK, NULL, &orig_mask); // Block all signals
 
-		ret = select(nfds, &read_fds, NULL, NULL, NULL);
+		ret = pselect(nfds, &read_fds, NULL, NULL, NULL, &orig_mask);
 		if (ret < 0) {
 			if (errno == EINTR) { // Spurious wakeup
 				pr_log("debug", "Select returned after being interrupted");
@@ -343,8 +339,6 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 			wl_display_cancel_read(client->display);
 			return -1;
 		}
-
-		pthread_sigmask(SIG_SETMASK, &sigmask_after, NULL);
 
 		// 4. Check who has data
 		if (FD_ISSET(sigpipe[0], &read_fds)) {

@@ -42,5 +42,6 @@ int main(int argc, char *argv[]) {
 	ret = 0;
 
 cleanup:
+	pr_log("debug", "Cleaning up and closing...");
 	return ret;
 }

@@ -1,6 +1,9 @@
 #include <errno.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
+#include "../led/include/protocol.h"
 #include "bar.h"
 #include "device.h"
 #include "libvfio-user.h"
@@ -80,6 +83,28 @@ static inline int device_setup_capabilities(struct led_grid_device *device) {
 	return 0;
 }
 
+static inline int device_connect_to_led_grid(struct led_grid_device *device) {
+	int ret = 0;
+
+	device->sock_fd = socket(PF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+	if (device->sock_fd < 0) {
+		pr_log_libcerror(errno, "socket");
+		return -1;
+	}
+
+	struct sockaddr_un addr = {
+		.sun_family = AF_UNIX,
+		.sun_path = "\0" SERVER_SOCKET_NAME,
+	};
+	ret = connect(device->sock_fd, (void *)&addr, sizeof(addr));
+	if (ret < 0) {
+		pr_log_libcerror(errno, "connect");
+		return -1;
+	}
+
+	return 0;
+}
+
 static int on_device_reset(vfu_ctx_t *ctx,
 						   [[maybe_unused]] enum vfu_reset_type type) {
 }
@@ -136,6 +161,11 @@ int device_init(struct led_grid_device *device, const char *socket_path) {
 		pr_log_libcerror(errno, "vfu_realize_ctx");
 		goto cleanup;
 	}
+
+	// 9. Connect to LED device
+	ret = device_connect_to_led_grid(device);
+	if (ret < 0)
+		goto cleanup;
 
 	return 0;
 

@@ -53,14 +53,14 @@ int setup_signal_handlers() {
 	}
 
 	// MASK SOME SIGANSL FOR RACE CONDITION CONSIDERATIONS
-	sigset_t block_mask;
-	sigemptyset(&block_mask);
-	sigaddset(&block_mask, SIGUSR1);
-
-	if (sigprocmask(SIG_BLOCK, &block_mask, NULL) < 0) {
-		pr_log_libcerror(errno, "sigprocmask");
-		return -1;
-	}
+	// sigset_t block_mask;
+	// sigemptyset(&block_mask);
+	// sigaddset(&block_mask, SIGUSR1);
+	//
+	// if (sigprocmask(SIG_BLOCK, &block_mask, NULL) < 0) {
+	// 	pr_log_libcerror(errno, "sigprocmask");
+	// 	return -1;
+	// }
 
 	return 0;
 }

@@ -307,13 +307,15 @@ void wl_pointer_frame_handler(void *data, [[maybe_unused]] struct wl_pointer *wl
 		pr_log("debug", "Received right click");
 		int index = get_underlying_led(client);
 
-		struct led_command cmd;
-		cmd.cmd = CMD_SET_COLOR;
-		cmd.led_id = index;
-		cmd.data.color[0] = rand() % 255;
-		cmd.data.color[1] = rand() % 255;
-		cmd.data.color[2] = rand() % 255;
-		cmd.data.color[3] = 255;
+		struct led_command cmd = (struct led_command){
+			CMD_SET_COLOR,
+			index,
+			{
+				rand() % 255,
+				rand() % 255,
+				rand() % 255,
+				255,
+			}};
 
 		if (index < 0)
 			pr_log("debug", "No LED under pointer");
@@ -325,9 +327,10 @@ void wl_pointer_frame_handler(void *data, [[maybe_unused]] struct wl_pointer *wl
 		pr_log("debug", "Received left click");
 		int index = get_underlying_led(client);
 
-		struct led_command cmd;
-		cmd.cmd = CMD_TOGGLE;
-		cmd.led_id = index;
+		struct led_command cmd = (struct led_command){
+			.cmd = CMD_TOGGLE,
+			.led_id = index,
+		};
 
 		if (index < 0)
 			pr_log("debug", "No LED under pointer");
@@ -362,11 +365,15 @@ void wl_keyboard_key_handler(void *data, struct wl_keyboard *keyboard,
 
 	switch (key) {
 		case KEY_SPACE:
-			cmd.cmd = CMD_SET_COLOR;
-			cmd.data.color[0] = time % 255;
-			cmd.data.color[1] = time % 255;
-			cmd.data.color[2] = time % 255;
-			cmd.data.color[3] = 255;
+			cmd = (struct led_command){
+				CMD_SET_COLOR,
+				.color = {
+					time % 255,
+					time % 255,
+					time % 255,
+					255,
+				},
+			};
 			break;
 
 		case KEY_UP:

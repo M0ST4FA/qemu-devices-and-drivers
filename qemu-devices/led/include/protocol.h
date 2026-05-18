@@ -17,7 +17,7 @@ struct [[gnu::packed]] led_command {
 	int32_t led_id;
 	union {
 		uint8_t color[4];
-	} data;
+	};
 };
 
 struct protocol_state {

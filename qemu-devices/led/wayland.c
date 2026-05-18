@@ -398,7 +398,7 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 						break;
 
 					case CMD_SET_COLOR:
-						memcpy(led->color, cmd.data.color, sizeof(led->color));
+						memcpy(led->color, cmd.color, sizeof(led->color));
 						break;
 				}
 			} else if (n == 0) {

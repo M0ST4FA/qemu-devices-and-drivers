@@ -94,7 +94,7 @@ int wayland_client_init(struct wayland_client *state);
 
 void wayland_client_redraw(struct wayland_client *client_state);
 
-int wayland_client_run_loop(struct wayland_client *client_state, struct protocol_state *protocol_state);
+int wayland_client_run_loop(struct wayland_client *client, struct protocol_state *protocol_state);
 
 static inline void wayland_client_destroy(struct wayland_client *client) {
 	render_buffer_destroy(&client->render_buffer);

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -21,7 +22,6 @@
 #include "logger.h"
 #include "protocol.h"
 #include "render.h"
-#include "signal_setup.h"
 #include "wayland-internal.h"
 #include "wayland.h"
 #include "xdg-shell-client-protocol.h"
@@ -295,14 +295,62 @@ void wayland_client_redraw(struct wayland_client *client_state) {
 	wl_surface_commit(client_state->wl_surface);
 }
 
-int wayland_client_run_loop(struct wayland_client *client, struct protocol_state *protocol_state) {
-	int ret = 0, wl_fd, connected_client_fd = -1, nfds;
-	fd_set read_fds;
+static inline int wayland_client_handle_ready_sockets(struct wayland_client *client,
+													  struct pollfd fds[POLLFD_NR],
+													  struct protocol_state *protocol_state) {
+	bool wayland_handled = false;
 
-	wl_fd = wl_display_get_fd(client->display);
+	for (int i = 0; i < POLLFD_NR; i++) {
+		struct pollfd *current = &fds[i];
+
+		if (current->fd == -1 || current->revents == 0)
+			continue;
+
+		switch (i) {
+			case 0: // Wayland fd
+				if (wl_display_read_events(client->display) < 0) {
+					pr_log("error", "Failed to read wayland events");
+					return -1;
+				}
+				if (wl_display_dispatch_pending(client->display) < 0) {
+					pr_log("error", "Wayland connection closed");
+					return -1;
+				}
+				wayland_handled = true;
+				break;
+			case 1: // Server listening fd
+				protocol_accept_connection(protocol_state, fds);
+				break;
+
+			default: // All others
+				protocol_handle_command(protocol_state, &client->led_grid, current);
+		};
+	}
+
+	if (!wayland_handled) // Important to not cause a dead lock on the next iteration of outer loop
+		wl_display_cancel_read(client->display);
+
+	return 0;
+}
+
+int wayland_client_run_loop(struct wayland_client *client, struct protocol_state *protocol_state) {
+	int ret = 0;
+	struct pollfd fds[POLLFD_NR] = {0}; // The 2 for Wayland socket and server fd
+
+	fds[0] = (struct pollfd){
+		wl_display_get_fd(client->display),
+		POLLIN,
+		0,
+	};
+	fds[1] = (struct pollfd){
+		protocol_state->server_fd,
+		POLLIN,
+		0,
+	};
+	for (int i = 2; i < POLLFD_NR; i++)
+		fds[i].fd = -1; // Kernel will ignore this
 
 	while (1) {
-
 		// 1. Prepare wayland for reading AND flush any pending outgoing messages
 		while (wl_display_prepare_read(client->display)) { // read any event into the input queue
 			// If preparation fails, it means there are already events in the internal queue
@@ -310,114 +358,27 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 		}
 		wl_display_flush(client->display); // send any messages on the output queue
 
-		// 2. Build the fdset (must be done inside the loop as syscall destroys it)
-		FD_ZERO(&read_fds);
-		FD_SET(sigpipe[0], &read_fds);
-		FD_SET(wl_fd, &read_fds);
-		FD_SET(protocol_state->server_fd, &read_fds);
-		nfds = (protocol_state->server_fd > wl_fd ? protocol_state->server_fd : wl_fd) + 1;
-
-		if (connected_client_fd != -1) {
-			FD_SET(connected_client_fd, &read_fds);
-			if (connected_client_fd >= nfds)
-				nfds = connected_client_fd + 1;
-		}
-
-		// 3. Go to sleep
-		sigset_t orig_mask;
-		pthread_sigmask(SIG_SETMASK, NULL, &orig_mask); // Block all signals
-
-		ret = pselect(nfds, &read_fds, NULL, NULL, NULL, &orig_mask);
+		// 2. Go to sleep
+		ret = poll(fds, POLLFD_NR, -1);
 		if (ret < 0) {
 			if (errno == EINTR) { // Spurious wakeup
-				pr_log("debug", "Select returned after being interrupted");
+				pr_log("debug", "Poll returned after being interrupted");
 				wl_display_cancel_read(client->display);
 				continue;
 			}
 
-			pr_log_libcerror(errno, "select");
+			pr_log_libcerror(errno, "poll");
 			wl_display_cancel_read(client->display);
 			return -1;
 		}
 
-		// 4. Check who has data
-		if (FD_ISSET(sigpipe[0], &read_fds)) {
-			pr_log("debug", "Signal handler called");
-			char buf[20] = {0};
-			read(sigpipe[0], &buf, 20);
-		}
+		if (ret == 0) // No event happened
+			continue;
 
-		// a. Do we have a new client trying to connect?
-		if (FD_ISSET(protocol_state->server_fd, &read_fds)) {
-			int new_fd = accept4(protocol_state->server_fd, NULL, NULL, SOCK_NONBLOCK);
-			if (new_fd >= 0) {
-				pr_log("debug", "A client has connected!");
-
-				// Drop client if and old one already exists (a more sophisticated app would handle more than just 1 client at a time :))
-				if (connected_client_fd != -1) {
-					pr_log("debug", "Dropping connection to new client...we can't betray our old client :|");
-					close(new_fd);
-				} else
-					connected_client_fd = new_fd;
-			}
-		}
-
-		// b. Did we receive a new command from any of our clients?
-		if (connected_client_fd != -1 && FD_ISSET(connected_client_fd, &read_fds)) {
-			struct led_command cmd;
-			struct led *led = NULL;
-			int n = read(connected_client_fd, &cmd, sizeof(cmd));
-
-			if (n == sizeof(cmd)) {
-				pr_log("debug", "Received command: CMD %d, LED ID %d", cmd.cmd, cmd.led_id);
-
-				if (cmd.led_id < LED_NR)
-					led = &client->led_grid.leds[cmd.led_id];
-				else {
-					pr_log("debug", "Invalid LED ID: Out of range");
-					continue;
-				}
-
-				switch (cmd.cmd) {
-					case CMD_TOGGLE:
-						led->on = !led->on;
-						break;
-
-					case CMD_ON:
-						led->on = 1;
-						break;
-
-					case CMD_OFF:
-						led->on = 0;
-						break;
-
-					case CMD_SET_COLOR:
-						memcpy(led->color, cmd.color, sizeof(led->color));
-						break;
-				}
-			} else if (n == 0) {
-				pr_log("debug", "Translator disconnected!");
-				close(connected_client_fd);
-				connected_client_fd = -1;
-			}
-		}
-
-		// c. Did the compositor send us any new events?
-		if (FD_ISSET(wl_fd, &read_fds)) {
-			// Read the data from the wl_fd into wayland queue
-			if (wl_display_read_events(client->display) < 0) {
-				pr_log("error", "Failed to read wayland events");
-				return -1;
-			}
-		} else
-			// Someone else wokeup...cancle read state
-			wl_display_cancel_read(client->display);
-
-		// 5. Dispatch our input-event handler functions
-		if (wl_display_dispatch_pending(client->display) < 0) {
-			pr_log("error", "Wayland connection closed");
+		// 3. Handle events
+		ret = wayland_client_handle_ready_sockets(client, fds, protocol_state);
+		if (ret < 0)
 			return -1;
-		}
 	}
 
 	return 0;

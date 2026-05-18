@@ -397,7 +397,8 @@ void wl_keyboard_key_handler(void *data, struct wl_keyboard *keyboard,
 			break;
 	}
 
-	write(client->client_fd, &cmd, sizeof(cmd));
+	if (cmd.cmd != 0)
+		write(client->client_fd, &cmd, sizeof(cmd));
 };
 
 void wl_keyboard_keymap_handler(void *data, struct wl_keyboard *keyboard, uint32_t format, int fd, uint32_t size) {

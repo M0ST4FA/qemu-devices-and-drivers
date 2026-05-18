@@ -286,7 +286,7 @@ static inline int get_underlying_led(struct wayland_client *client) {
 	return index;
 }
 
-void wl_pointer_frame_handler(void *data, struct wl_pointer *wl_pointer) {
+void wl_pointer_frame_handler(void *data, [[maybe_unused]] struct wl_pointer *wl_pointer) {
 	struct wayland_client *client = data;
 	struct pointer_event *event = &client->pointer_event;
 

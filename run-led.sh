@@ -1,5 +1,6 @@
 #!/bin/sh
 killall led
+killall led-gpio
 
 ./build/devices/led/led &
 sleep 2

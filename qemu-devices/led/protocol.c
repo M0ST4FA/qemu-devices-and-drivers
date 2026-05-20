@@ -49,12 +49,26 @@ int protocol_init(struct protocol_state *protocol_state) {
 }
 
 void protocol_destroy(struct protocol_state *protocol_state) {
-	if (protocol_state->server_fd > STDERR_FILENO)
+	if (protocol_state->server_fd > STDERR_FILENO) {
 		close(protocol_state->server_fd);
+		protocol_state->server_fd = -1;
+	}
+
+	struct pollfd *fds = protocol_state->fds;
+	// Client connections are stored starting at index 2.
+	// Index 0 is Wayland FD, Index 1 is server_fd.
+	for (int i = 2; i < POLLFD_NR; i++) {
+		if (fds[i].fd > STDERR_FILENO) {
+			if (close(fds[i].fd) < 0)
+				pr_log_libcerror(errno, "close(protocol_destroy)");
+			fds[i].fd = -1;
+		}
+	}
 }
 
-int protocol_accept_connection(struct protocol_state *protocol_state,
-							   struct pollfd fds[POLLFD_NR]) {
+int protocol_accept_connection(struct protocol_state *protocol_state) {
+	struct pollfd *fds = protocol_state->fds;
+
 	if (protocol_state->conn_nr > MAX_CLIENT_CONNECTIONS) {
 		pr_log("debug", "Rejecting new client connection: maximum number of connections reached");
 		return -1;
@@ -69,11 +83,12 @@ int protocol_accept_connection(struct protocol_state *protocol_state,
 	// Find an empty slot and use it; it MUST exist because we haven't reached connection limit yet
 	for (int i = 2; i < POLLFD_NR; i++) {
 		struct pollfd *current = &fds[i];
-		if (current->fd > 0) // valid
-			continue;
-
-		current->fd = new_fd;
-		current->events = POLLIN;
+		if (current->fd < 0) {
+			current->fd = new_fd;
+			current->events = POLLIN;
+			protocol_state->conn_nr++;
+			break;
+		}
 	}
 
 	pr_log("debug", "A new client has connected!");
@@ -109,17 +124,18 @@ int protocol_handle_command([[maybe_unused]] struct protocol_state *protocol_sta
 	// 3. Check for disconnecting clients
 	if (n == 0 || fd->revents & POLLHUP) {
 		pr_log("debug", "Client disconnected!");
-		close(fd->fd);
+		if (close(fd->fd) < 0)
+			pr_log_libcerror(errno, "close(protocol_handle_command)");
+
 		fd->fd = -1;
 		fd->events = 0;
+		protocol_state->conn_nr--;
 		return 0;
 	}
 
 	// 4. Handle command
 	if (n != sizeof(cmd))
 		return -1;
-
-	pr_log("debug", "Received command: CMD %d, LED ID %d", cmd.cmd, cmd.led_id);
 
 	if (cmd.led_id < LED_NR)
 		led = &led_grid->leds[cmd.led_id];
@@ -149,6 +165,15 @@ int protocol_handle_command([[maybe_unused]] struct protocol_state *protocol_sta
 			pr_log("error", "Unkown command <%d>", cmd.cmd);
 			return -1;
 	}
+
+	const char *cmd_to_str[] = {
+		[CMD_SET_COLOR] = "CMD_SET_COLOR",
+		[CMD_ON] = "CMD_ON",
+		[CMD_OFF] = "CMD_OFF",
+		[CMD_TOGGLE] = "CMD_TOGGLE",
+	};
+
+	pr_log("debug", "Received command: CMD %s, LED ID %d", cmd_to_str[cmd.cmd], cmd.led_id);
 
 	return 0;
 }

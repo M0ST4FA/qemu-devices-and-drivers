@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libvfio-user.h"
+#include <stdint.h>
 
 #define LED_NR 64
 
@@ -15,18 +16,34 @@
 
 #define MAX_DMA_REGIONS 1024
 
-struct led {
+struct smart_led {
+	// LED has two registers
+
+	uint32_t state; // Bit 0: ON/OFF, the rest are reserverd
+	uint32_t color; // 32-bit ARBG
 };
 
 struct led_grid_device {
 	vfu_ctx_t *vfu_ctx;
 	const char *socket_path;
 	int sock_fd;
-	struct led leds[LED_NR];
+
+	// Device state (Think: hardware registers, but abstracted)
+	struct { // Logical encapsulation, outside access would not reference a member
+		/* Direction register used for BAR0
+		 * 1 bit per LED.
+		 * */
+		uint64_t direction;
+		struct smart_led leds[LED_NR]; // Full LED state (LED register file)
+	};
 };
 
-int device_init(struct led_grid_device *dev, const char *socket_path);
+int device_init(struct led_grid_device *restrict device, const char *socket_path);
 
-int device_run_eventloop(struct led_grid_device *dev);
+uint64_t device_get_led_states(struct led_grid_device *restrict device);
+int device_set_led_states(struct led_grid_device *restrict device, uint64_t states);
+int device_clr_led_states(struct led_grid_device *restrict device, uint64_t states);
 
-void device_destroy(struct led_grid_device *dev);
+int device_run_eventloop(struct led_grid_device *restrict dev);
+
+void device_destroy(struct led_grid_device *restrict device);

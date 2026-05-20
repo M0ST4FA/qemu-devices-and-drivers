@@ -1,4 +1,6 @@
 #include <errno.h>
+#include <stdint.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -9,7 +11,9 @@
 #include "libvfio-user.h"
 #include "logger.h"
 
-static inline int device_setup_ctx_and_header(struct led_grid_device *device, const char *socket_path) {
+static inline int device_setup_ctx_and_header(
+	struct led_grid_device *restrict device,
+	const char *restrict socket_path) {
 	int ret;
 
 	// 1. Setup context
@@ -37,7 +41,7 @@ static inline int device_setup_ctx_and_header(struct led_grid_device *device, co
 	return 0;
 }
 
-static inline int device_setup_regions(struct led_grid_device *device) {
+static inline int device_setup_regions(struct led_grid_device *restrict device) {
 	int ret = 0;
 	vfu_ctx_t *ctx = device->vfu_ctx;
 	int region_flags = VFU_REGION_FLAG_MEM | VFU_REGION_FLAG_RW;
@@ -65,7 +69,7 @@ static inline int device_setup_regions(struct led_grid_device *device) {
 	return 0;
 }
 
-static inline int device_setup_irqs(struct led_grid_device *device, int count) {
+static inline int device_setup_irqs(struct led_grid_device *restrict device, int count) {
 	int ret = 0;
 	vfu_ctx_t *ctx = device->vfu_ctx;
 
@@ -78,12 +82,12 @@ static inline int device_setup_irqs(struct led_grid_device *device, int count) {
 	return 0;
 }
 
-static inline int device_setup_capabilities(struct led_grid_device *device) {
+static inline int device_setup_capabilities(struct led_grid_device *restrict device) {
 
 	return 0;
 }
 
-static inline int device_connect_to_led_grid(struct led_grid_device *device) {
+static inline int device_connect_to_led_grid(struct led_grid_device *restrict device) {
 	int ret = 0;
 
 	device->sock_fd = socket(PF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
@@ -116,7 +120,7 @@ static void on_dma_register([[maybe_unused]] vfu_ctx_t *ctx,
 static void on_dma_unregister([[maybe_unused]] vfu_ctx_t *ctx,
 							  [[maybe_unused]] vfu_dma_info_t *dma_info) {};
 
-int device_init(struct led_grid_device *device, const char *socket_path) {
+int device_init(struct led_grid_device *restrict device, const char *socket_path) {
 	int ret;
 
 	// 1. Create context
@@ -174,7 +178,155 @@ cleanup:
 	return -1;
 };
 
+uint64_t device_get_led_states(struct led_grid_device *restrict device) {
+	uint64_t states = 0; // 1 bit per led, in-order
+
+	for (int i = 0; i < LED_NR; i++) {
+		if (i >= 64) {
+			pr_log("debug",
+				   "LED states is overflowing! We use a uint64_t, one bit per lid, for state. It seems that there are more than 64 LEDs");
+			break; // Make hardware robust, to not break software
+		}
+
+		struct smart_led *led = &device->leds[i];
+
+		const bool state = led->state & 1; // This should exclude each bit except bit 0
+		const uint64_t mask = ((uint64_t)state << i);
+		states |= mask;
+	}
+
+	return states;
+};
+int device_set_led_states(struct led_grid_device *restrict device, uint64_t states) {
+	uint64_t direction = device->direction;
+	int count = 0; // Number of leds we've set
+	struct led_command cmd = {0};
+
+	for (int i = 0; i < LED_NR; i++) {
+		// 1. Some necessary checks
+
+		if (!((direction >> i) & 0x1)) {
+			pr_log("error", "Trying to write to a GPIO pin marked for reading");
+			continue;
+		}
+
+		if (!((states >> i) & 0x1))
+			continue;
+
+		// 2. Update register GPIO controller register state
+		device->leds[i].state = 1; // Set bit 0 to 1
+
+		// 3. Send command to LED controller (this is just the GPIO controller)
+		cmd = (struct led_command){
+			.cmd = CMD_ON,
+			.led_id = i,
+			.color = {0}, // If you don't do this, you'll send whatever garbage was on the stack in its place
+		};
+		write(device->sock_fd, &cmd, sizeof(cmd));
+		// Notice how protocol is async, which is nice. Loop doesn't have to block.
+		// Okay, it may block, but only in case socket write buffer is full.
+		// But we don't have to wait for a reply from server
+		count++;
+	}
+
+	return count;
+}
+int device_clr_led_states(struct led_grid_device *restrict device, uint64_t states) {
+	uint64_t direction = device->direction;
+	int count = 0; // Number of leds we've set
+	struct led_command cmd = {0};
+
+	for (int i = 0; i < LED_NR; i++) {
+		// 1. Some necessary checks
+
+		if (!((direction >> i) & 0x1)) {
+			pr_log("error", "Trying to write to a GPIO pin marked for reading");
+			continue;
+		}
+
+		if (!((states >> i) & 0x1))
+			continue;
+
+		// 2. Update register GPIO controller register state
+		device->leds[i].state = 0; // Set bit 0 to 0
+
+		// 3. Send command to LED controller (this is just the GPIO controller)
+		cmd = (struct led_command){
+			.cmd = CMD_OFF,
+			.led_id = i,
+		};
+		write(device->sock_fd, &cmd, sizeof(cmd));
+		// Notice how protocol is async, which is nice. Loop doesn't have to block.
+		// Okay, it may block, but only in case socket write buffer is full.
+		// But we don't have to wait for a reply from server
+		count++;
+	}
+
+	return count;
+}
+
 int device_run_eventloop(struct led_grid_device *device) {
+	int ret;
+
+	if (vfu_attach_ctx(device->vfu_ctx) < 0) {
+		pr_log_libcerror(errno, "vfu_attach_ctx");
+		return -1;
+	}
+
+	struct pollfd fds[2] = {
+		(struct pollfd){
+			.fd = vfu_get_poll_fd(device->vfu_ctx),
+			.events = POLLIN,
+			.revents = 0,
+		},
+		(struct pollfd){
+			.fd = device->sock_fd,
+			.events = POLLIN,
+			.revents = 0,
+		},
+	};
+
+	while (1) {
+		ret = poll(fds, 2, -1);
+		if (ret == 0)
+			continue;
+
+		if (ret < 0) {
+			if (errno == EINTR) {
+				pr_log("debug", "Poll returned after being interrupted...repolling");
+				continue;
+			}
+
+			pr_log_libcerror(errno, "poll");
+			return -1;
+		}
+
+		// 1. Handle vfio-user command
+		if (fds[0].revents & POLLIN) {
+			ret = vfu_run_ctx(device->vfu_ctx);
+
+			if (ret < 0) {
+				if (errno == ENOTCONN) {
+					pr_log("debug", "Kernel client disconnected, waiting for new one...");
+					if (vfu_attach_ctx(device->vfu_ctx) < 0) {
+						pr_log_libcerror(errno, "vfu_attach_ctx");
+						return -1;
+					};
+					fds[0].fd = vfu_get_poll_fd(device->vfu_ctx);
+				} else {
+					pr_log_libcerror(errno, "vfu_run_ctx");
+					return -1;
+				}
+			}
+		}
+
+		// 2. Handle LED device
+		// We can only read disconnections as we're the producer of the socket
+		if (fds[1].revents & (POLLERR | POLLHUP)) {
+			pr_log("error", "LED device disconnected. Shutting down GPIO server...");
+			return 0; // Not a vfu error, so main() should not treat it as an error state
+		}
+	}
 
 	return 0;
 }

@@ -71,8 +71,7 @@ void wl_display_error_handler([[maybe_unused]] void *data, struct wl_display *di
 
 	pr_log("error", "Fatal error has occured during processing of wayland event: %s", message);
 
-	wayland_client_destroy(client);
-	exit(EXIT_FAILURE);
+	client->shutting_down = true;
 };
 void wl_display_delete_id_handler([[maybe_unused]] void *data, struct wl_display *display, uint32_t id) {
 	pr_log("debug", "Object with id %d deleted", id);
@@ -82,7 +81,7 @@ void xdg_wm_base_ping_handler([[maybe_unused]] void *data,
 							  struct xdg_wm_base *xdg_wm_base,
 							  uint32_t serial) {
 	xdg_wm_base_pong(xdg_wm_base, serial);
-	pr_log("debug", "Received a ping and responded with a pong");
+	// pr_log("debug", "Received a ping and responded with a pong");
 }
 
 void registry_global_handler(void *data, struct wl_registry *registry,
@@ -152,13 +151,10 @@ void xdg_toplevel_configure_bounds_handler([[maybe_unused]] void *data, struct x
 }
 
 void xdg_toplevel_close_handler([[maybe_unused]] void *data, struct xdg_toplevel *xdg_toplevel) {
-	struct wayland_client *state = data;
+	struct wayland_client *client = data;
 
 	pr_log("debug", "Closing toplevel");
-	render_buffer_destroy(&state->render_buffer);
-	wl_surface_destroy(state->wl_surface);
-	state->wl_surface = NULL;
-	exit(EXIT_SUCCESS);
+	client->shutting_down = true;
 }
 
 void xdg_toplevel_wm_capabilities_handler(void *data, struct xdg_toplevel *xdg_toplevel, struct wl_array *) {
@@ -296,8 +292,8 @@ void wayland_client_redraw(struct wayland_client *client_state) {
 }
 
 static inline int wayland_client_handle_ready_sockets(struct wayland_client *client,
-													  struct pollfd fds[POLLFD_NR],
 													  struct protocol_state *protocol_state) {
+	struct pollfd *fds = protocol_state->fds;
 	bool wayland_handled = false;
 
 	for (int i = 0; i < POLLFD_NR; i++) {
@@ -319,7 +315,7 @@ static inline int wayland_client_handle_ready_sockets(struct wayland_client *cli
 				wayland_handled = true;
 				break;
 			case 1: // Server listening fd
-				protocol_accept_connection(protocol_state, fds);
+				protocol_accept_connection(protocol_state);
 				break;
 
 			default: // All others
@@ -335,7 +331,7 @@ static inline int wayland_client_handle_ready_sockets(struct wayland_client *cli
 
 int wayland_client_run_loop(struct wayland_client *client, struct protocol_state *protocol_state) {
 	int ret = 0;
-	struct pollfd fds[POLLFD_NR] = {0}; // The 2 for Wayland socket and server fd
+	struct pollfd *fds = protocol_state->fds; // The 2 for Wayland socket and server fd
 
 	fds[0] = (struct pollfd){
 		wl_display_get_fd(client->display),
@@ -376,9 +372,14 @@ int wayland_client_run_loop(struct wayland_client *client, struct protocol_state
 			continue;
 
 		// 3. Handle events
-		ret = wayland_client_handle_ready_sockets(client, fds, protocol_state);
+		ret = wayland_client_handle_ready_sockets(client, protocol_state);
 		if (ret < 0)
 			return -1;
+
+		if (client->shutting_down) {
+			pr_log("debug", "Shutting down...");
+			return 0;
+		}
 	}
 
 	return 0;

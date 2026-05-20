@@ -19,12 +19,12 @@ The LuxPCIe Gen 1 is a virtual PCIe device designed to demonstrate two paradigms
 
 | Offset | Name         | Access | Description |
 | :---   | :---         | :---   | :--- |
-| `0x00` | `REG_MAGIC`  | RO     | Magic: `0x4750494F` ("GPIO"). |
-| `0x04` | `REG_VER`    | RO     | Version: `0x00000001`. |
-| `0x08` | `REG_DIR`    | RW     | Direction (1=Out, 0=In). Default: `0x0`. |
-| `0x0C` | `REG_DATA`   | RW     | Data. Read/Write current pin states. |
-| `0x10` | `REG_SET`    | WO     | Atomic Set. Write `1` to a bit to set pin HIGH. |
-| `0x14` | `REG_CLR`    | WO     | Atomic Clear. Write `1` to a bit to set pin LOW. |
+| `0x00` | `REG_MAGIC`  | RO     | Magic: `0x4750494F` ("GPIO"). 4 Bytes. |
+| `0x04` | `REG_VER`    | RO     | Version: `0x00000001`. 4 Bytes. |
+| `0x08` | `REG_DIR`    | RW     | Direction (1=Out, 0=In). 8 Bytes. |
+| `0x10` | `REG_DATA`   | RW     | Data. Read/Write current pin states. 8 Bytes. |
+| `0x18` | `REG_SET`    | WO     | Atomic Set. Write `1` to a bit to set pin HIGH. 8 Bytes. |
+| `0x20` | `REG_CLR`    | WO     | Atomic Clear. Write `1` to a bit to set pin LOW. 8 Bytes. |
 
 ---
 

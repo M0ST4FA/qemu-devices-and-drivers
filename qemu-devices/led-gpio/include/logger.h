@@ -8,7 +8,7 @@
 static inline void pr_log(const char *level, const char *format, ...) {
 	va_list args;
 
-	fprintf(stderr, "[%s] ", level);
+	fprintf(stderr, "[HW][%s] ", level);
 
 	va_start(args, format);
 

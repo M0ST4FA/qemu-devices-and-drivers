@@ -86,6 +86,7 @@ struct wayland_client {
 	struct render_buffer render_buffer;
 	struct led_grid led_grid;
 	int client_fd;
+	bool shutting_down;
 };
 
 extern volatile sig_atomic_t paused;

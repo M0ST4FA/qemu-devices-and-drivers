@@ -44,7 +44,7 @@ int main() {
 
 cleanup:
 	pr_log("debug", "Cleaning up");
-	wayland_client_destroy(&client_state);
 	protocol_destroy(&protocol_state);
+	wayland_client_destroy(&client_state);
 	return ret;
 }

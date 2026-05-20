@@ -38,6 +38,12 @@ int main(int argc, char *argv[]) {
 		goto cleanup;
 	}
 
+	ret = device_run_eventloop(&device);
+	if (ret < 0) {
+		pr_log("error", "Error while executing inside event loop");
+		goto cleanup;
+	}
+
 	device_destroy(&device);
 	ret = 0;
 

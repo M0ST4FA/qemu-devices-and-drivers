@@ -1,5 +1,5 @@
 # Kbuild
-ALL_MODULES := pci-driver/ qemu-edu-driver/ mathaccel/
+ALL_MODULES := pci-driver/ qemu-edu-driver/ mathaccel/ led-gpio/
 
 SELECTED := $(foreach dir,${SUB_TARGETS},${dir}/)
 FINAL_OBJ := $(if ${SUB_TARGETS},$(filter ${SELECTED},${ALL_MODULES}),${ALL_MODULES})

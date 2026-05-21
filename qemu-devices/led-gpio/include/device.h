@@ -3,18 +3,7 @@
 #include "libvfio-user.h"
 #include <stdint.h>
 
-#define LED_NR 64
-
-#define VENDOR_ID (0x1234) // Private ID
-#define DEVICE_ID (0x0001)
-#define CLASS_BASE_ID (0x08)
-#define CLASS_SUB_ID (0x80)
-#define CLASS_PI_ID (0x00)
-
-#define BAR0_REGION_SIZE 4096
-#define BAR1_REGION_SIZE 4096
-
-#define MAX_DMA_REGIONS 1024
+#include "hw.h"
 
 struct smart_led {
 	// LED has two registers

@@ -3,6 +3,7 @@
 
 #include "bar.h"
 #include "device.h"
+#include "hw.h"
 #include "libvfio-user.h"
 
 static inline ssize_t bar0_read(struct led_grid_device *device,

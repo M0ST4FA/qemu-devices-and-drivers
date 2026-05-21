@@ -3,8 +3,10 @@
 
 #include "asm-generic/pci_iomap.h"
 #include "linux/dev_printk.h"
-#include "linux/printk.h"
+#include "linux/export.h"
 #include "lux.h"
+
+struct lux_device *global_lux = NULL;
 
 static const struct pci_device_id lux_id_table[] = {
 	{PCI_DEVICE(LUX_VENDOR_ID, LUX_DEVICE_ID)},
@@ -17,31 +19,33 @@ static int lux_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id_ta
 
 	struct lux_device *lux_device = devm_kzalloc(&pdev->dev, sizeof(*lux_device), GFP_KERNEL);
 	if (lux_device == NULL) {
-		pr_alert(LUX_CORE_DRIVER_NAME ": failed to allocate device structure");
+		dev_err(&pdev->dev, "failed allocate device data structure");
 		return -ENOMEM;
 	}
 
 	ret = pcim_enable_device(pdev);
 	if (ret < 0) {
-		dev_err(&pdev->dev, ": failed to enable PCI device");
+		dev_err(&pdev->dev, "failed to enable PCI device");
 		return ret;
 	}
 
 	lux_device->bar[0] = pcim_iomap_region(pdev, 0, LUX_CORE_DRIVER_NAME);
 	if (!lux_device->bar[0]) {
-		dev_err(&pdev->dev, ": failed to request BAR 0 or map it into kernel virtual address space");
+		dev_err(&pdev->dev, "failed to request BAR 0 or map it into kernel virtual address space");
 		return -ENOMEM; // Likey virtual space is exhausted
 	}
 
 	pci_set_drvdata(pdev, lux_device);
+	global_lux = lux_device;
 
-	dev_info(&pdev->dev, ": device probed and registered");
+	dev_info(&pdev->dev, "device probed and registered");
 
 	return 0;
 }
 
 static void lux_pci_remove(struct pci_dev *pdev) {
-	dev_info(&pdev->dev, ": device unregistered");
+	global_lux = NULL;
+	dev_info(&pdev->dev, "device unregistered");
 }
 
 struct pci_driver lux_pci_driver = {
@@ -52,6 +56,7 @@ struct pci_driver lux_pci_driver = {
 };
 
 module_pci_driver(lux_pci_driver);
+EXPORT_SYMBOL_GPL(global_lux);
 
 /* Already handled through `module_pci_driver()` macro
  * static int __init lux_core_init(void) {

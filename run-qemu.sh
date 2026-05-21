@@ -47,8 +47,9 @@ qemu-system-x86_64 \
 	-device xio3130-downstream,id=switch_down3,bus=switch_up,chassis=3,slot=3 \
 	-device xio3130-downstream,id=switch_down4,bus=switch_up,chassis=3,slot=4 \
 	\
-	-netdev user,id=net0 \
+	-netdev user,id=net0,hostfwd=tcp::8230-:8230 \
 	-device virtio-net-pci,netdev=net0 \
+	-device vhost-vsock-pci,guest-cid=3 \
 	\
 	-device edu \
 	-device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/led-gpio.sock", "type":"unix"},"bus":"rp2","id":"led-gpio0"}' \

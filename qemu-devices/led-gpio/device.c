@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stdint.h>
+#include <string.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -269,7 +270,36 @@ int device_clr_led_states(struct led_grid_device *restrict device, uint64_t stat
 	return count;
 }
 
-int device_run_eventloop(struct led_grid_device *device) {
+inline int device_set_led_color(struct led_grid_device *restrict device,
+								int32_t led_id, uint8_t color[4]) {
+	struct led_command cmd = {
+		.cmd = CMD_SET_COLOR,
+		.led_id = led_id,
+		.color = {color[0], color[1], color[2], color[3]},
+	};
+
+	struct smart_led *led = &device->leds[led_id];
+	memcpy(led->color, color, 4);
+
+	int ret = write(device->sock_fd, &cmd, sizeof(cmd));
+	if (ret < 0) {
+		pr_log_libcerror(errno, "write(device_set_led_color)");
+		return ret;
+	}
+
+	return 0;
+}
+
+inline int device_get_led_color(struct led_grid_device *restrict device,
+								int32_t led_id, uint64_t *color) {
+	struct smart_led *led = &device->leds[led_id];
+
+	*color = *led->color;
+
+	return 0;
+}
+
+inline int device_run_eventloop(struct led_grid_device *device) {
 	int ret;
 
 	if (vfu_attach_ctx(device->vfu_ctx) < 0) {

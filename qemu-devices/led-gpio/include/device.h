@@ -5,13 +5,6 @@
 
 #include "hw.h"
 
-struct smart_led {
-	// LED has two registers
-
-	uint32_t state; // Bit 0: ON/OFF, the rest are reserverd
-	uint32_t color; // 32-bit ARBG
-};
-
 struct led_grid_device {
 	vfu_ctx_t *vfu_ctx;
 	const char *socket_path;
@@ -32,6 +25,10 @@ int device_init(struct led_grid_device *restrict device, const char *socket_path
 uint64_t device_get_led_states(struct led_grid_device *restrict device);
 int device_set_led_states(struct led_grid_device *restrict device, uint64_t states);
 int device_clr_led_states(struct led_grid_device *restrict device, uint64_t states);
+int device_set_led_color(struct led_grid_device *restrict device,
+						 int32_t led_id, uint8_t color[4]);
+int device_get_led_color(struct led_grid_device *restrict device,
+						 int32_t led_id, uint64_t *color);
 
 int device_run_eventloop(struct led_grid_device *restrict dev);
 

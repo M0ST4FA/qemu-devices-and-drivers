@@ -1,5 +1,7 @@
 #pragma once
 
+#include <linux/types.h>
+
 #define LED_NR 64
 
 #define VENDOR_ID (0x1234) // Private ID
@@ -35,3 +37,17 @@ static const char *reg_names[] = {
 	[REG_SET] = "REG_SET",
 	[REG_CLR] = "REG_CLR",
 };
+
+struct [[gnu::packed]] smart_led {
+	// LED has two registers
+
+	__u32 state;   // Bit 0: ON/OFF, the rest are reserverd
+	__u8 color[4]; // 32-bit ARBG
+};
+
+enum bar1_regs {
+	REG_STATE = 0x00, // 4 bytes
+	REG_COLOR = 0x04, // 4 bytes
+};
+
+#define BAR1_REG_SIZE 4

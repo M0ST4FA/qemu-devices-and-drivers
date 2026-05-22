@@ -15,7 +15,8 @@ static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, 
 	// 1. Set direction to output
 	int64_t pin_mask = (1ULL << offset);
 	int64_t original_direction = readq(bar0 + REG_DIRECTION);
-	writeq(pin_mask | original_direction, bar0 + REG_DIRECTION);
+	int64_t new_direction = pin_mask | original_direction;
+	writeq(new_direction, bar0 + REG_DIRECTION);
 	wmb();
 
 	// 2. Set value
@@ -24,7 +25,7 @@ static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, 
 	else
 		writeq(pin_mask, bar0 + REG_SET);
 
-	pr_info(LUX_CHIP_LABEL ": Direction set to output for pin %d, value set to %d", offset, value);
+	pr_info(LUX_CHIP_LABEL ": (direction_output) Direction: %llx, %u=%d", new_direction, offset, value);
 
 	return 0;
 }
@@ -36,12 +37,14 @@ static int lux_gpio_direction_input(struct gpio_chip *gc, unsigned int offset) {
 	// 1. Set direction to input
 	int64_t pin_mask = (1ULL << offset);
 	int64_t original_direction = readq(bar0 + REG_DIRECTION);
-	writeq(~pin_mask & original_direction, bar0 + REG_DIRECTION);
+	int64_t new_direction = ~pin_mask & original_direction;
+	writeq(new_direction, bar0 + REG_DIRECTION);
+	wmb();
 
 	// 2. Read value
-	int64_t value = (readq(bar0 + REG_DATA) >> offset) & 1;
+	int64_t value = (readq(bar0 + REG_DATA) >> offset) & 1ULL;
 
-	pr_info(LUX_CHIP_LABEL ": Direction set to input for pin %d, read %lld", offset, value);
+	pr_info(LUX_CHIP_LABEL ": (direction_input) Direction: %llx, %u=%lld", new_direction, offset, value);
 
 	return 0;
 }
@@ -50,10 +53,15 @@ static int lux_gpio_get_direction(struct gpio_chip *gc, unsigned int offset) {
 	struct lux_device *lux_device = gpiochip_get_data(gc);
 	void __iomem *bar0 = lux_device->bar[0];
 
-	int direction = (readq(bar0 + REG_DIRECTION) >> offset) & 1ULL;
-	pr_info(LUX_CHIP_LABEL ": Direction of pin %d = %d", offset, direction);
+	// Hardware: 1 is Output, 0 is Input.
+	// Kernel: 1 is Input, 0 is Output.
+	int hw_direction = (readq(bar0 + REG_DIRECTION) >> offset) & 1ULL;
+	int kernel_direction = hw_direction == LUX_DIRECTION_OUT ? GPIO_LINE_DIRECTION_OUT
+															 : GPIO_LINE_DIRECTION_IN;
 
-	return direction;
+	pr_info(LUX_CHIP_LABEL ": (get_direction) Direction of pin %d = hw:%d kernel:%d", offset, hw_direction, kernel_direction);
+
+	return kernel_direction;
 }
 
 static int lux_gpio_set(struct gpio_chip *gc, unsigned int offset, int value) {
@@ -66,7 +74,7 @@ static int lux_gpio_set(struct gpio_chip *gc, unsigned int offset, int value) {
 	else
 		writeq(pin_mask, bar0 + REG_SET);
 
-	pr_info(LUX_CHIP_LABEL ": Set pin %d = %d", offset, value);
+	pr_info(LUX_CHIP_LABEL ": (set) Set pin %d = %d", offset, value);
 
 	return 0;
 }
@@ -75,7 +83,7 @@ static int lux_gpio_get(struct gpio_chip *gc, unsigned int offset) {
 	void __iomem *bar0 = lux_device->bar[0];
 	int value = (readq(bar0 + REG_DATA) >> offset) & 1ULL;
 
-	pr_info(LUX_CHIP_LABEL ": pin %d = %d", offset, value);
+	pr_info(LUX_CHIP_LABEL ": (get) Get pin %d = %d", offset, value);
 
 	return value;
 }
@@ -89,7 +97,7 @@ static int lux_gpio_set_multiple(struct gpio_chip *gc,
 	writeq(*mask & *bits, bar0 + REG_SET);
 	writeq(*mask & ~*bits, bar0 + REG_CLR);
 
-	pr_info(LUX_CHIP_LABEL ": Set a bunch of pins (%ld) :)", *mask);
+	pr_info(LUX_CHIP_LABEL ": (set_multiple) Set a bunch of pins (%lx=%lx) :)", *mask, *bits);
 
 	return 0;
 }
@@ -101,7 +109,7 @@ static int lux_gpio_get_multiple(struct gpio_chip *gc,
 	int64_t data_reg = readq(bar0 + REG_DATA);
 	*bits = data_reg & *mask;
 
-	pr_info(LUX_CHIP_LABEL ": Get a bunch of pins (%ld) :)", *mask);
+	pr_info(LUX_CHIP_LABEL ": (get_multiple) Get a bunch of pins (%lx=%lx) :)", *mask, *bits);
 
 	return 0;
 }

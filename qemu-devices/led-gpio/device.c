@@ -205,13 +205,15 @@ int device_set_led_states(struct led_grid_device *restrict device, uint64_t stat
 	for (int i = 0; i < LED_NR; i++) {
 		// 1. Some necessary checks
 
-		if (!((direction >> i) & 0x1)) {
+		if (!((states >> i) & 0x1)) // Not writing to this pin
+			continue;
+		else
+			pr_log("debug", "Setting pin %d", i);
+
+		if (((direction >> i) & 0x1) != LUX_DIRECTION_OUT) { // Not set for output
 			pr_log("error", "Trying to write to a GPIO pin marked for reading");
 			continue;
 		}
-
-		if (!((states >> i) & 0x1))
-			continue;
 
 		// 2. Update register GPIO controller register state
 		device->leds[i].state = 1; // Set bit 0 to 1
@@ -239,13 +241,15 @@ int device_clr_led_states(struct led_grid_device *restrict device, uint64_t stat
 	for (int i = 0; i < LED_NR; i++) {
 		// 1. Some necessary checks
 
-		if (!((direction >> i) & 0x1)) {
+		if (!((states >> i) & 0x1)) // Not writing to this pin
+			continue;
+		else
+			pr_log("debug", "Clearing pin %d", i);
+
+		if (((direction >> i) & 0x1) != LUX_DIRECTION_OUT) {
 			pr_log("error", "Trying to write to a GPIO pin marked for reading");
 			continue;
 		}
-
-		if (!((states >> i) & 0x1))
-			continue;
 
 		// 2. Update register GPIO controller register state
 		device->leds[i].state = 0; // Set bit 0 to 0

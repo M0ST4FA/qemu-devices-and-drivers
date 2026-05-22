@@ -5,6 +5,7 @@
 #include "device.h"
 #include "hw.h"
 #include "libvfio-user.h"
+#include "logger.h"
 
 static inline ssize_t bar0_read(struct led_grid_device *device,
 								char *const buf, size_t count, loff_t offset) {
@@ -39,8 +40,13 @@ static inline ssize_t bar0_read(struct led_grid_device *device,
 			// WO registers
 		case REG_SET:
 		case REG_CLR:
-			break;
+			return -1;
 	}
+
+	if (count == 4)
+		pr_log("debug", "op: READ, reg: %s, val: %b", reg_names[offset], *(uint32_t *)buf);
+	else if (count == 8)
+		pr_log("debug", "op: READ, reg: %s, val: %lb", reg_names[offset], *(uint64_t *)buf);
 
 	return count;
 }
@@ -52,7 +58,7 @@ static inline ssize_t bar0_write(struct led_grid_device *device,
 		// RO registers
 		case REG_MAGIC:
 		case REG_VERSION:
-			break;
+			return -1;
 
 		case REG_DIRECTION:
 			if (count == 4) {
@@ -71,7 +77,7 @@ static inline ssize_t bar0_write(struct led_grid_device *device,
 				uint64_t states = *(uint64_t *)buf;
 				uint64_t changed_leds = states ^ device_get_led_states(device);
 
-				device_set_led_states(device, states);
+				device_set_led_states(device, states & changed_leds);
 				device_clr_led_states(device, ~states & changed_leds);
 			}
 			break;
@@ -103,6 +109,11 @@ static inline ssize_t bar0_write(struct led_grid_device *device,
 			}
 			break;
 	}
+
+	if (count == 4)
+		pr_log("debug", "op: WRITE, reg: %s, val: %b", reg_names[offset], *(uint32_t *)buf);
+	else if (count == 8)
+		pr_log("debug", "op: WRITE, reg: %s, val: %lb", reg_names[offset], *(uint64_t *)buf);
 
 	return count;
 }

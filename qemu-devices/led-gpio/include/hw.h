@@ -10,6 +10,8 @@
 
 #define BAR0_REGION_SIZE 4096
 #define BAR1_REGION_SIZE 4096
+#define LUX_DIRECTION_OUT 1
+#define LUX_DIRECTION_IN 0
 
 #define MAX_DMA_REGIONS 1024
 
@@ -23,4 +25,13 @@ enum bar0_regs {
 	REG_DATA = 0x10,	  // 8 bytes
 	REG_SET = 0x18,		  // 8 bytes
 	REG_CLR = 0x20,		  // 8 bytes
+};
+
+static const char *reg_names[] = {
+	[REG_MAGIC] = "REG_MAGIC",
+	[REG_VERSION] = "REG_VERSION",
+	[REG_DIRECTION] = "REG_DIRECTION",
+	[REG_DATA] = "REG_DATA",
+	[REG_SET] = "REG_SET",
+	[REG_CLR] = "REG_CLR",
 };

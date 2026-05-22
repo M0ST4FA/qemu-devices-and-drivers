@@ -28,7 +28,7 @@ static inline void led_grid_init(struct led_grid *led_grid) {
 		struct led *led = &led_grid->leds[i];
 		led->color[3] = 255;
 
-		led->on = 1;
+		led->on = 0;
 		// Cyberpunk Cyan
 		// led->color[0] = 0;
 		// led->color[1] = 147;

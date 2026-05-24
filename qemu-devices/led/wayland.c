@@ -127,8 +127,8 @@ void xdg_toplevel_configure_handler([[maybe_unused]] void *data, struct xdg_topl
 	pr_log("debug", "Configure toplevel %dx%d", width, height);
 
 	if (width == 0 && height == 0) {
-		client_state->window.pending_dim.width = 600;
-		client_state->window.pending_dim.height = 400;
+		client_state->window.pending_dim.width = 650;
+		client_state->window.pending_dim.height = 700;
 		client_state->window.flags = WIN_INITIALIZED | WIN_PENDING_RESIZE;
 		return;
 	}

@@ -42,7 +42,7 @@ struct [[gnu::packed]] smart_led {
 	// LED has two registers
 
 	__u32 state;   // Bit 0: ON/OFF, the rest are reserverd
-	__u8 color[4]; // 32-bit ARBG
+	__u8 color[4]; // 32-bit RGBA
 };
 
 enum bar1_regs {

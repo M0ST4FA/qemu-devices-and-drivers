@@ -3,6 +3,7 @@
 
 #include "asm-generic/pci_iomap.h"
 #include "linux/dev_printk.h"
+#include "linux/err.h"
 #include "linux/export.h"
 #include "lux.h"
 
@@ -30,9 +31,15 @@ static int lux_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id_ta
 	}
 
 	lux_device->bar[0] = pcim_iomap_region(pdev, 0, LUX_CORE_DRIVER_NAME);
-	if (!lux_device->bar[0]) {
+	if (IS_ERR(lux_device->bar[0])) {
 		dev_err(&pdev->dev, "failed to request BAR 0 or map it into kernel virtual address space");
-		return -ENOMEM; // Likey virtual space is exhausted
+		return PTR_ERR(lux_device->bar[0]); // Likey virtual space is exhausted
+	}
+
+	lux_device->bar[1] = pcim_iomap_region(pdev, 1, LUX_CORE_DRIVER_NAME);
+	if (IS_ERR(lux_device->bar[1])) {
+		dev_err(&pdev->dev, "Failed to request BAR 1 or map it into kernel virtual address space");
+		return PTR_ERR(lux_device->bar[1]);
 	}
 
 	pci_set_drvdata(pdev, lux_device);

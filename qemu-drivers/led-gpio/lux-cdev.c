@@ -94,7 +94,11 @@ static struct file_operations lux_fops = {
 static int __init lux_cdev_init(void) {
 	int ret = 0;
 
-	// 1. Register major and minor numbers
+	if (global_lux == NULL || global_lux->bar[1] == NULL) {
+		pr_err(LUX_CHAR_DEVICE_NAME ": Core driver not loaded or BAR 1 not mapped\n");
+		return -ENODEV;
+	}
+
 	ret = alloc_chrdev_region(&global_lux->cdev_id, 0, 1, LUX_CHAR_DEVICE_NAME);
 	if (ret < 0) {
 		pr_err(LUX_CHAR_DEVICE_NAME ": Failed to allocate major and minor numbers for lux device");

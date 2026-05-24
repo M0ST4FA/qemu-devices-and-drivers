@@ -36,39 +36,52 @@ static inline ssize_t bar1_read(struct led_grid_device *device,
 	return count;
 }
 
+static inline int write_led_state(struct led_grid_device *device, int led_id, int32_t state) {
+	int ret = 0;
+	int64_t mask = 1ULL << led_id;	 // Choose only the LED with `led_id`
+	int state_on = (state & 1) == 1; // Set or clear?
+
+	if (state_on)
+		ret = device_set_led_states(device, mask);
+	else
+		ret = device_clr_led_states(device, mask);
+
+	if (ret < 0) {
+		pr_log("error", "Failed to set the state of led %d to %x",
+			   led_id, state);
+		return -1;
+	} else {
+		pr_log("debug", "op: WRITE LED, state: %x", state);
+		return 0;
+	}
+};
+
+static inline int write_led_color(struct led_grid_device *device, int led_id, uint8_t color[4]) {
+	int ret = 0;
+
+	ret = device_set_led_color(device, led_id, color);
+
+	if (ret < 0) {
+		pr_log("error", "Failed to set the color of led %d to %x",
+			   led_id, *(int32_t *)color);
+		return -1;
+	} else {
+		pr_log("debug", "op: WRITE LED, color: %x", *(uint32_t *)color);
+		return 0;
+	}
+}
+
 static inline int bar1_write_smart_led(struct led_grid_device *device,
 									   char *const buf, loff_t offset) {
 	struct smart_led led;
 	memcpy(&led, buf, BAR1_REG_SIZE * 2);
 	int led_id = offset / sizeof(struct smart_led);
 
-	int32_t led_reg_state = led.state;
-	int64_t mask = (led_reg_state & 1ULL) << led_id;
-
-	if ((led_reg_state & 1) == 0) {
-		if (device_clr_led_states(device, mask) < 0) {
-			pr_log("error", "Failed to set the state of led %d to %x",
-				   led_id, led_reg_state);
-			return -1;
-		} else
-			pr_log("debug", "op: WRITE LED, state: %x", led_reg_state);
-	}
-
-	if ((led_reg_state & 1) == 1) {
-		if (device_set_led_states(device, mask) < 0) {
-			pr_log("error", "Failed to set the state of led %d to %x",
-				   led_id, led_reg_state);
-			return -1;
-		} else
-			pr_log("debug", "op: WRITE LED, state: %x", led_reg_state);
-	}
-
-	if (device_set_led_color(device, led_id, (uint8_t *)buf) < 0) {
-		pr_log("error", "Failed to set the color of led %d to %lx",
-			   led_id, *(int64_t *)buf);
+	if (write_led_state(device, led_id, led.state) < 0)
 		return -1;
-	} else
-		pr_log("debug", "op: WRITE LED, color: %x", *(uint32_t *)led.color);
+
+	if (write_led_color(device, led_id, led.color) < 0)
+		return -1;
 
 	return 0;
 }
@@ -80,37 +93,17 @@ static inline int bar1_write_smart_led_component(struct led_grid_device *device,
 	int reg_offset = offset % BAR1_REG_SIZE;
 
 	// 2. Set values
-	if (reg_offset == REG_STATE) {
-		int32_t led_reg_state = *(uint32_t *)buf;
-		int64_t mask = (led_reg_state & 1ULL) << led_id;
-
-		if ((led_reg_state & 1) == 0) {
-			if (device_clr_led_states(device, mask) < 0) {
-				pr_log("error", "Failed to set the state of led %d to %lx",
-					   led_id, mask);
+	switch ((enum bar1_regs)reg_offset) {
+		case REG_STATE:
+			if (write_led_state(device, led_id, *(uint32_t *)buf) < 0)
 				return -1;
-			} else
-				pr_log("debug", "op: WRITE STATE, state: %x", led_reg_state);
-		}
+			break;
 
-		if ((led_reg_state & 1) == 1) {
-			if (device_set_led_states(device, mask) < 0) {
-				pr_log("error", "Failed to set the state of led %d to %lx",
-					   led_id, mask);
+		case REG_COLOR:
+			if (write_led_color(device, led_id, (uint8_t *)buf) < 0)
 				return -1;
-			} else
-				pr_log("debug", "op: WRITE STATE, state: %x", led_reg_state);
-		}
-	}
-
-	if (reg_offset == REG_COLOR) {
-		if (device_set_led_color(device, led_id, (uint8_t *)buf) < 0) {
-			pr_log("error", "Failed to set the color of led %d to %lx",
-				   led_id, *(int64_t *)buf);
-			return -1;
-		} else
-			pr_log("debug", "op: WRITE COLOR, color: %x", *(uint32_t *)buf);
-	}
+			break;
+	};
 
 	return 0;
 }

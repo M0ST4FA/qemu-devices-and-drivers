@@ -10,9 +10,9 @@
 #include "wayland-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
-#define LED_NR 24
+#define LED_NR 64
 #define LED_COLS 8
-#define LED_ROWS 3
+#define LED_ROWS 8
 
 enum window_flags {
 	WIN_INITIALIZED = (1 << 0),

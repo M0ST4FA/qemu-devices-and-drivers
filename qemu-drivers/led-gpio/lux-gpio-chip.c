@@ -1,11 +1,20 @@
 #include "asm/io.h"
 #include <linux/gpio/driver.h>
+#include <linux/gpio/machine.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/printk.h>
 
 #include "../../qemu-devices/led-gpio/include/hw.h"
 #include "lux.h"
+
+static struct gpiod_lookup_table lux_led_lookup = {
+	.dev_id = NULL,
+	.table = {
+		GPIO_LOOKUP("lux-gpio-chip", 0, "led0", GPIO_ACTIVE_HIGH),
+		{},
+	},
+};
 
 static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, int value) {
 
@@ -141,12 +150,15 @@ static int __init lux_gpio_init(void) {
 		pr_err(LUX_CHIP_LABEL ": Error while registering chip");
 	}
 
+	gpiod_add_lookup_table(&lux_led_lookup);
+
 	pr_info(LUX_CHIP_LABEL ": Successfully registered chip");
 
 	return ret;
 }
 
 static void __exit lux_gpio_exit(void) {
+	gpiod_remove_lookup_table(&lux_led_lookup);
 }
 
 module_init(lux_gpio_init);

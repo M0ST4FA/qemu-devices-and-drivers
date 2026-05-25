@@ -5,6 +5,7 @@
 #include "linux/dev_printk.h"
 #include "linux/err.h"
 #include "linux/export.h"
+
 #include "lux.h"
 
 struct lux_device *global_lux = NULL;

@@ -3,18 +3,16 @@
 #include <linux/gpio/machine.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/platform_device.h>
 #include <linux/printk.h>
 
 #include "../../qemu-devices/led-gpio/include/hw.h"
+#include "linux/overflow.h"
+#include "linux/slab.h"
 #include "lux.h"
 
-static struct gpiod_lookup_table lux_led_lookup = {
-	.dev_id = NULL,
-	.table = {
-		GPIO_LOOKUP("lux-gpio-chip", 0, "led0", GPIO_ACTIVE_HIGH),
-		{},
-	},
-};
+static struct gpiod_lookup_table *lux_led_lookup;
+static struct platform_device *lux_led_platdev;
 
 static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, int value) {
 
@@ -140,25 +138,51 @@ static struct gpio_chip lux_gpio_chip = {
 static int __init lux_gpio_init(void) {
 	int ret = 0;
 
+	// 1. Some initial checks
 	if (global_lux == NULL || global_lux->bar[0] == NULL) {
 		pr_err("Lux device not present...probably module lux-core not loaded yet");
 		return -ENODEV;
 	}
 
+	// 2. Register with gpiolib
 	ret = gpiochip_add_data(&lux_gpio_chip, global_lux);
 	if (ret < 0) {
 		pr_err(LUX_CHIP_LABEL ": Error while registering chip");
 	}
 
-	gpiod_add_lookup_table(&lux_led_lookup);
+	// 3. Register GPIO lookup table (maps pins to names) with the GPIO consumer API
+	// This lookup table is then used by the consumer API to retrive a gpio descriptor based on name
+	lux_led_lookup = kzalloc(struct_size(lux_led_lookup, table, 65),
+							 GFP_KERNEL);
+	lux_led_lookup->dev_id = LUX_PLATFORM_DEVICE_NAME; // MUST match platform device name
 
-	pr_info(LUX_CHIP_LABEL ": Successfully registered chip");
+	for (int i = 0; i < 64; i++) {
+		lux_led_lookup->table[i].key = LUX_CHIP_LABEL;
+		lux_led_lookup->table[i].chip_hwnum = i;
+		lux_led_lookup->table[i].con_id = "led"; // Same name for all
+		lux_led_lookup->table[i].idx = i;		 // We use index to differentiate
+		lux_led_lookup->table[i].flags = GPIO_ACTIVE_HIGH;
+	}
+	// The 65th entry is guaranteed to be 0 by kzalloc
+
+	gpiod_add_lookup_table(lux_led_lookup);
+
+	// 4. Register a platform device
+	// This tells the kernel "Hey, new hardware just dropped!"
+	// Notice that normally, you don't create a device; the driver model core creates it for you
+	// Here we are creating a device
+	// Name is used for driver matching, id indicates instance number (-1 if the only instance)
+	lux_led_platdev = platform_device_register_simple(LUX_PLATFORM_DEVICE_NAME, -1, NULL, 0);
+
+	pr_info(LUX_CHIP_LABEL ": Successfully registered chip and device");
 
 	return ret;
 }
 
 static void __exit lux_gpio_exit(void) {
-	gpiod_remove_lookup_table(&lux_led_lookup);
+	platform_device_unregister(lux_led_platdev);
+	gpiod_remove_lookup_table(lux_led_lookup);
+	kfree(lux_led_lookup);
 }
 
 module_init(lux_gpio_init);

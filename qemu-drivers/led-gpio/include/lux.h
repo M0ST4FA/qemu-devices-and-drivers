@@ -7,6 +7,7 @@
 #define LUX_CHAR_DEVICE_NAME "lux-chardev"
 #define LUX_CLASS_NAME "lux"
 #define LUX_LED_DEVICE_NAME "lux-led"
+#define LUX_PLATFORM_DEVICE_NAME "lux-leds"
 
 #define LUX_VENDOR_ID 0x1234
 #define LUX_DEVICE_ID 0x0001

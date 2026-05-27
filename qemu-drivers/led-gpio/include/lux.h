@@ -13,6 +13,7 @@
 #define LED_NAME_COLOR "rgb:"
 #define LED_NAME_FUNCTION "indicator"
 #define LED_NAME LED_NAME_DEVICENAME LED_NAME_COLOR LED_NAME_FUNCTION
+#define LED_MC_NAME "rgb:smart"
 
 #define LUX_VENDOR_ID 0x1234
 #define LUX_DEVICE_ID 0x0001

@@ -46,10 +46,8 @@ static int lux_led_hw_control_is_supported(
 };
 
 static int lux_led_platform_probe(struct platform_device *platdev) {
-#define LED_ARRAY_SZ (sizeof(struct lux_led_data) * 64)
-
 	struct device *device = &platdev->dev;
-	struct lux_led_data *leds = devm_kzalloc(device, LED_ARRAY_SZ, GFP_KERNEL);
+	struct lux_led_data *leds = devm_kcalloc(device, 64, sizeof(struct lux_led_data), GFP_KERNEL);
 	if (leds == NULL)
 		return -ENOMEM;
 

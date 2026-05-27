@@ -93,6 +93,7 @@ static struct file_operations lux_fops = {
 
 static int __init lux_cdev_init(void) {
 	int ret = 0;
+	bool cdev_added = false;
 
 	if (global_lux == NULL || global_lux->bar[1] == NULL) {
 		pr_err(LUX_CHAR_DEVICE_NAME ": Core driver not loaded or BAR 1 not mapped\n");
@@ -111,6 +112,7 @@ static int __init lux_cdev_init(void) {
 		pr_err(LUX_CHAR_DEVICE_NAME ": Failed to add cdev to VFS");
 		goto cleanup;
 	}
+	cdev_added = true;
 
 	lux_class = class_create(LUX_CLASS_NAME);
 	if (IS_ERR(lux_class)) {
@@ -131,25 +133,45 @@ static int __init lux_cdev_init(void) {
 	return 0;
 cleanup:
 
-	if (!IS_ERR(global_lux->device))
+	if (!IS_ERR_OR_NULL(global_lux->device)) {
 		device_destroy(lux_class, global_lux->cdev_id);
+		global_lux->device = NULL;
+	}
 
-	if (!IS_ERR(lux_class))
+	if (!IS_ERR_OR_NULL(lux_class)) {
 		class_destroy(lux_class);
+		lux_class = NULL;
+	}
 
 	unregister_chrdev_region(global_lux->cdev_id, 1);
+	global_lux->cdev_id = 0;
 
-	return 0;
+	if (cdev_added)
+		cdev_del(&global_lux->cdev);
+
+	return ret;
 }
 
 static void __exit lux_cdev_exit(void) {
-	if (global_lux->device)
-		device_destroy(lux_class, global_lux->cdev_id);
 
-	if (lux_class)
+	if (global_lux == NULL) {
+		pr_alert(LUX_CHAR_DEVICE_NAME ": Private struct is not allocated! (We're in exit path)");
+		return;
+	}
+
+	if (!IS_ERR_OR_NULL(global_lux->device)) {
+		device_destroy(lux_class, global_lux->cdev_id);
+		global_lux->device = NULL;
+	}
+
+	if (!IS_ERR_OR_NULL(lux_class)) {
 		class_destroy(lux_class);
+		lux_class = NULL;
+	}
 
 	unregister_chrdev_region(global_lux->cdev_id, 1);
+	global_lux->cdev_id = 0;
+
 	cdev_del(&global_lux->cdev);
 }
 

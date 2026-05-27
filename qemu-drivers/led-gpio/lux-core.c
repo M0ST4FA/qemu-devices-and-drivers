@@ -25,6 +25,10 @@ static int lux_request_pci_bars(struct device *dev,
 
 	struct resource *parent0, *parent1;
 	struct resource *resources = devm_kzalloc(dev, sizeof(struct resource) * 4, GFP_KERNEL);
+	if (!resources) {
+		dev_err(dev, "Failed to allocate memory for resource structs\n");
+		return -ENOMEM;
+	}
 
 	parent0 = devm_request_mem_region(dev, bar0->start, resource_size(bar0), LUX_CORE_DRIVER_NAME "-gpio");
 	if (!parent0)
@@ -55,7 +59,7 @@ static int lux_request_pci_bars(struct device *dev,
 	resources[3] = (struct resource){
 		.name = "smart-led",
 		.start = bar1->start,
-		.end = bar1->start + (sizeof(struct smart_led) - 1) * LED_NR,
+		.end = bar1->start + sizeof(struct smart_led) * LED_NR - 1,
 		.flags = IORESOURCE_MEM,
 	};
 

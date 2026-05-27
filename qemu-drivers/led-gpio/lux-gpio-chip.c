@@ -7,6 +7,8 @@
 #include <linux/printk.h>
 
 #include "../../qemu-devices/led-gpio/include/hw.h"
+#include "linux/dev_printk.h"
+#include "linux/err.h"
 #include "linux/ioport.h"
 #include "linux/overflow.h"
 #include "linux/slab.h"
@@ -139,6 +141,7 @@ static struct gpio_chip lux_gpio_chip = {
 
 static int __init lux_gpio_init(void) {
 	int ret = 0;
+	bool gpiochip_added = false;
 
 	// 1. Some initial checks
 	if (global_lux == NULL || global_lux->bar[0] == NULL) {
@@ -149,13 +152,20 @@ static int __init lux_gpio_init(void) {
 	// 2. Register with gpiolib
 	ret = gpiochip_add_data(&lux_gpio_chip, global_lux);
 	if (ret < 0) {
-		pr_err(LUX_CHIP_LABEL ": Error while registering chip");
+		pr_err(LUX_CHIP_LABEL ": Error while registering chip\n");
+		return ret;
 	}
+	gpiochip_added = true;
 
 	// 3. Register GPIO lookup table (maps pins to names) with the GPIO consumer API
 	// This lookup table is then used by the consumer API to retrive a gpio descriptor based on name
 	lux_led_lookup = kzalloc(struct_size(lux_led_lookup, table, 65),
 							 GFP_KERNEL);
+	if (lux_led_lookup == NULL) {
+		pr_err(LUX_CHIP_LABEL ": Failed to allocate lookup table for GPIO consumer API\n");
+		ret = -ENOMEM;
+		goto error;
+	}
 	lux_led_lookup->dev_id = LUX_PLATFORM_DEVICE_NAME; // MUST match platform device name
 
 	for (int i = 0; i < 64; i++) {
@@ -176,8 +186,28 @@ static int __init lux_gpio_init(void) {
 	// Name is used for driver matching, id indicates instance number (-1 if the only instance)
 	lux_led_platdev = platform_device_register_simple(LUX_PLATFORM_DEVICE_NAME, -1,
 													  lux_led_platdev_resources, 0);
+	if (IS_ERR(lux_led_platdev)) {
+		pr_err(LUX_CHIP_LABEL ": Failed to register platform device");
+		ret = PTR_ERR(lux_led_platdev);
+		goto error;
+	}
 
 	pr_info(LUX_CHIP_LABEL ": Successfully registered chip and device");
+	return 0;
+
+error:
+
+	if (!IS_ERR_OR_NULL(lux_led_platdev))
+		platform_device_unregister(lux_led_platdev);
+
+	if (lux_led_lookup) {
+		gpiod_remove_lookup_table(lux_led_lookup);
+		kfree(lux_led_lookup);
+		lux_led_lookup = NULL;
+	}
+
+	if (gpiochip_added)
+		gpiochip_remove(&lux_gpio_chip);
 
 	return ret;
 }
@@ -185,6 +215,7 @@ static int __init lux_gpio_init(void) {
 static void __exit lux_gpio_exit(void) {
 	platform_device_unregister(lux_led_platdev);
 	gpiod_remove_lookup_table(lux_led_lookup);
+	gpiochip_remove(&lux_gpio_chip);
 	kfree(lux_led_lookup);
 }
 

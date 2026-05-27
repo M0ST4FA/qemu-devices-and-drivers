@@ -1,3 +1,4 @@
+#include "asm-generic/errno.h"
 #include "linux/container_of.h"
 #include "linux/dev_printk.h"
 #include "linux/device.h"
@@ -5,13 +6,14 @@
 #include "linux/err.h"
 #include "linux/gfp_types.h"
 #include "linux/init.h"
+#include "linux/mod_devicetable.h"
+#include <linux/err.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
 #include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
-#include "linux/mod_devicetable.h"
 #include "lux.h"
 
 static struct platform_device_id lux_platdev_ids[] = {
@@ -34,11 +36,23 @@ static void lux_led_set_brightness(struct led_classdev *led_clsdev,
 	gpiod_set_value(led_data->gpiod, brightness != LED_OFF);
 }
 
+static int lux_led_hw_control_is_supported(
+	struct led_classdev *led_clsdev,
+	unsigned long flag) {
+
+	pr_info(LUX_LED_DEVICE_NAME ": checking whether HW acceleration is supported or not for trigger %ld\n", flag);
+
+	return -EOPNOTSUPP;
+};
+
 static int lux_led_platform_probe(struct platform_device *platdev) {
 #define LED_ARRAY_SZ (sizeof(struct lux_led_data) * 64)
 
 	struct device *device = &platdev->dev;
 	struct lux_led_data *leds = devm_kzalloc(device, LED_ARRAY_SZ, GFP_KERNEL);
+	if (leds == NULL)
+		return -ENOMEM;
+
 	int ret = 0;
 
 	for (int i = 0; i < 64; i++) {
@@ -54,7 +68,11 @@ static int lux_led_platform_probe(struct platform_device *platdev) {
 		// 2. Configure the led class device
 		led->clsdev.name = devm_kasprintf(device, GFP_KERNEL, LED_NAME "-%d",
 										  i);
+		if (led->clsdev.name == NULL)
+			return -ENOMEM;
+
 		led->clsdev.brightness_set = lux_led_set_brightness;
+		led->clsdev.hw_control_is_supported = lux_led_hw_control_is_supported;
 
 		// 3. Register with the LED subsystem
 		ret = devm_led_classdev_register(device, &led->clsdev);
@@ -73,16 +91,6 @@ static int lux_led_platform_probe(struct platform_device *platdev) {
 
 static void lux_led_platform_remove(struct platform_device *platdev) {
 	struct device *device = &platdev->dev;
-
-	// Free some resources early; the rest will be freed later
-	struct lux_led_data *leds = platform_get_drvdata(platdev);
-
-	for (int i = 0; i < 64; i++) {
-		struct lux_led_data *led = leds + i;
-
-		devm_led_classdev_unregister(device, &led->clsdev);
-		devm_gpiod_put(device, led->gpiod);
-	}
 
 	dev_info(device, "Successfully unregistered 64 LEDs\n");
 }

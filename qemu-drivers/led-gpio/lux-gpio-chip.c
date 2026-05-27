@@ -7,12 +7,14 @@
 #include <linux/printk.h>
 
 #include "../../qemu-devices/led-gpio/include/hw.h"
+#include "linux/ioport.h"
 #include "linux/overflow.h"
 #include "linux/slab.h"
 #include "lux.h"
 
 static struct gpiod_lookup_table *lux_led_lookup;
 static struct platform_device *lux_led_platdev;
+static struct resource lux_led_platdev_resources[0] = {};
 
 static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, int value) {
 
@@ -172,7 +174,8 @@ static int __init lux_gpio_init(void) {
 	// Notice that normally, you don't create a device; the driver model core creates it for you
 	// Here we are creating a device
 	// Name is used for driver matching, id indicates instance number (-1 if the only instance)
-	lux_led_platdev = platform_device_register_simple(LUX_PLATFORM_DEVICE_NAME, -1, NULL, 0);
+	lux_led_platdev = platform_device_register_simple(LUX_PLATFORM_DEVICE_NAME, -1,
+													  lux_led_platdev_resources, 0);
 
 	pr_info(LUX_CHIP_LABEL ": Successfully registered chip and device");
 

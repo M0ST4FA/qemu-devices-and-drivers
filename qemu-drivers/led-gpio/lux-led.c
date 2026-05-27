@@ -5,15 +5,23 @@
 #include "linux/err.h"
 #include "linux/gfp_types.h"
 #include "linux/init.h"
-#include "linux/printk.h"
-#include "linux/stddef.h"
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
 #include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
+#include "linux/mod_devicetable.h"
 #include "lux.h"
+
+static struct platform_device_id lux_platdev_ids[] = {
+	{
+		.name = LUX_PLATFORM_DEVICE_NAME,
+		.driver_data = 0ULL,
+	},
+	{},
+};
+MODULE_DEVICE_TABLE(platform, lux_platdev_ids);
 
 struct lux_led_data {
 	struct gpio_desc *gpiod;
@@ -44,7 +52,8 @@ static int lux_led_platform_probe(struct platform_device *platdev) {
 		}
 
 		// 2. Configure the led class device
-		led->clsdev.name = devm_kasprintf(device, GFP_KERNEL, "lux:green:led%d", i); // devicename:color:function
+		led->clsdev.name = devm_kasprintf(device, GFP_KERNEL, LED_NAME "-%d",
+										  i);
 		led->clsdev.brightness_set = lux_led_set_brightness;
 
 		// 3. Register with the LED subsystem
@@ -55,11 +64,7 @@ static int lux_led_platform_probe(struct platform_device *platdev) {
 		}
 	}
 
-	ret = platform_device_add_data(platdev, leds, LED_ARRAY_SZ);
-	if (ret < 0) {
-		dev_err(device, "Failed to add LED array as private data of platform device (err: %d)\n", ret);
-		return ret;
-	}
+	platform_set_drvdata(platdev, leds);
 
 	dev_info(device, "Successfully registered 64 LEDs\n");
 
@@ -68,6 +73,8 @@ static int lux_led_platform_probe(struct platform_device *platdev) {
 
 static void lux_led_platform_remove(struct platform_device *platdev) {
 	struct device *device = &platdev->dev;
+
+	// Free some resources early; the rest will be freed later
 	struct lux_led_data *leds = platform_get_drvdata(platdev);
 
 	for (int i = 0; i < 64; i++) {
@@ -87,25 +94,33 @@ struct platform_driver lux_led_platform_driver = {
 		.name = LUX_PLATFORM_DEVICE_NAME, // Bind the driver to the platform device
 		.owner = THIS_MODULE,
 	},
+	.id_table = lux_platdev_ids,
 };
 
-static __init int lux_led_init(void) {
-	int ret = 0;
+// static __init int lux_led_init(void) {
+// 	int ret = 0;
+//
+// 	ret = platform_driver_register(&lux_led_platform_driver);
+// 	if (ret < 0) {
+// 		pr_err(LUX_LED_DEVICE_NAME ": Failed to register platform driver (err: %d)", ret);
+// 		return ret;
+// 	}
+//
+// 	return 0;
+// }
+//
+// static __exit void lux_led_exit(void) {
+// 	platform_driver_unregister(&lux_led_platform_driver);
+// }
+//
+// module_init(lux_led_init);
+// module_exit(lux_led_exit);
 
-	ret = platform_driver_register(&lux_led_platform_driver);
-	if (ret < 0) {
-		pr_err(LUX_LED_DEVICE_NAME ": Failed to register platform driver (err: %d)", ret);
-		return ret;
-	}
+// Way better thant the previous approach
+// In fact, I hade a UAF bug for so long because I forgot to call
+// platform_driver_unregister()
+module_platform_driver(lux_led_platform_driver);
 
-	return 0;
-}
-
-static __exit void lux_led_exit(void) {
-}
-
-module_init(lux_led_init);
-module_exit(lux_led_exit);
 MODULE_AUTHOR("m0st4fa");
 MODULE_DESCRIPTION("LED subsystem driver for lux device");
 MODULE_LICENSE("GPL");

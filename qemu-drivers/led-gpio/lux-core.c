@@ -3,9 +3,12 @@
 
 #include "asm-generic/pci_iomap.h"
 #include "linux/dev_printk.h"
+#include "linux/device/devres.h"
 #include "linux/err.h"
 #include "linux/export.h"
 
+#include "../../qemu-devices/led-gpio/include/hw.h"
+#include "linux/ioport.h"
 #include "lux.h"
 
 struct lux_device *global_lux = NULL;
@@ -15,6 +18,69 @@ static const struct pci_device_id lux_id_table[] = {
 	{0},
 };
 MODULE_DEVICE_TABLE(pci, lux_id_table);
+
+static int lux_request_pci_bars(struct device *dev,
+								struct resource *bar0,
+								struct resource *bar1) {
+
+	struct resource *parent0, *parent1;
+	struct resource *resources = devm_kzalloc(dev, sizeof(struct resource) * 4, GFP_KERNEL);
+
+	parent0 = devm_request_mem_region(dev, bar0->start, resource_size(bar0), LUX_CORE_DRIVER_NAME "-gpio");
+	if (!parent0)
+		return -EBUSY;
+
+	parent1 = devm_request_mem_region(dev, bar1->start, resource_size(bar1), LUX_CORE_DRIVER_NAME "-smart");
+	if (!parent1)
+		return -EBUSY;
+
+	resources[0] = (struct resource){
+		.name = "magic",
+		.start = bar0->start + REG_MAGIC,
+		.end = bar0->start + REG_MAGIC + 3,
+		.flags = IORESOURCE_MEM,
+	};
+	resources[1] = (struct resource){
+		.name = "version",
+		.start = bar0->start + REG_VERSION,
+		.end = bar0->start + REG_VERSION + 3,
+		.flags = IORESOURCE_MEM,
+	};
+	resources[2] = (struct resource){
+		.name = "gpio-ctrl",
+		.start = bar0->start + REG_DIRECTION,
+		.end = bar0->start + REG_DIRECTION + 8 * 3,
+		.flags = IORESOURCE_MEM,
+	};
+	resources[3] = (struct resource){
+		.name = "smart-led",
+		.start = bar1->start,
+		.end = bar1->start + (sizeof(struct smart_led) - 1) * LED_NR,
+		.flags = IORESOURCE_MEM,
+	};
+
+	if (devm_request_resource(dev, parent0, resources) < 0) {
+		dev_err(dev, "Failed to claim magic register\n");
+		return -EBUSY;
+	};
+
+	if (devm_request_resource(dev, parent0, resources + 1) < 0) {
+		dev_err(dev, "Failed to claim version register\n");
+		return -EBUSY;
+	};
+
+	if (devm_request_resource(dev, parent0, resources + 2) < 0) {
+		dev_err(dev, "Failed to claim gpio registers\n");
+		return -EBUSY;
+	};
+
+	if (devm_request_resource(dev, parent1, resources + 3) < 0) {
+		dev_err(dev, "Failed to claim smart-led registers\n");
+		return -EBUSY;
+	};
+
+	return 0;
+}
 
 static int lux_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id_table) {
 	int ret = 0;
@@ -31,15 +97,21 @@ static int lux_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id_ta
 		return ret;
 	}
 
-	lux_device->bar[0] = pcim_iomap_region(pdev, 0, LUX_CORE_DRIVER_NAME);
+	ret = lux_request_pci_bars(&pdev->dev, &pdev->resource[0], &pdev->resource[1]);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to request PCI BARs\n");
+		return ret;
+	}
+
+	lux_device->bar[0] = pcim_iomap(pdev, 0, 0);
 	if (IS_ERR(lux_device->bar[0])) {
-		dev_err(&pdev->dev, "failed to request BAR 0 or map it into kernel virtual address space");
+		dev_err(&pdev->dev, "failed to map BAR 0 into kernel virtual address space");
 		return PTR_ERR(lux_device->bar[0]); // Likey virtual space is exhausted
 	}
 
-	lux_device->bar[1] = pcim_iomap_region(pdev, 1, LUX_CORE_DRIVER_NAME);
+	lux_device->bar[1] = pcim_iomap(pdev, 1, 0);
 	if (IS_ERR(lux_device->bar[1])) {
-		dev_err(&pdev->dev, "Failed to request BAR 1 or map it into kernel virtual address space");
+		dev_err(&pdev->dev, "Failed to map BAR 1 into kernel virtual address space");
 		return PTR_ERR(lux_device->bar[1]);
 	}
 

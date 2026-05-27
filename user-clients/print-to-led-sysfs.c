@@ -14,6 +14,10 @@
 #include "font.h"
 
 #define LED_DEFAULT_COLOR (0xFF00FFFF)
+#define LED_NAME_DEVICENAME ""
+#define LED_NAME_COLOR "rgb:"
+#define LED_NAME_FUNCTION "indicator"
+#define LED_NAME LED_NAME_DEVICENAME LED_NAME_COLOR LED_NAME_FUNCTION
 
 static inline void print_usage_exit(void) {
 	printf("Usage: print-to-led-sysfs <string>\n");
@@ -36,7 +40,8 @@ static int open_sysfs_leds(int led_fds[LED_NR]) {
 	char led_name[64] = {0};
 
 	for (int i = 0; i < LED_NR; i++) {
-		snprintf(led_name, 64, "/sys/class/leds/lux:green:led%d/brightness", i);
+		snprintf(led_name, 64, "/sys/class/leds/" LED_NAME "-%d/brightness",
+				 i);
 		led_fds[i] = open(led_name, O_WRONLY | O_CLOEXEC);
 		if (led_fds[i] < 0) {
 			fprintf(stderr, "open %s: %s\n", led_name, strerror(errno));
@@ -47,16 +52,26 @@ static int open_sysfs_leds(int led_fds[LED_NR]) {
 	return 0;
 }
 
-static void clear_led_grid(int led_fds[LED_NR]) {
+static inline void write_led(int led_fds[LED_NR], int led_id, bool led_open) {
 	int ret = 0;
 
+	if (led_open) {
+		ret = write(led_fds[led_id], "1", sizeof("1"));
+		if (ret < 0)
+			perror("write");
+	} else {
+		ret = write(led_fds[led_id], "0", sizeof("0"));
+		if (ret < 0)
+			perror("write");
+	}
+}
+
+static inline void clear_led_grid(int led_fds[LED_NR]) {
 	for (int y = 0; y < ROW_NR; y++) {
 		for (int x = 0; x < COL_NR; x++) {
 			int led_id = y * 8 + x;
 
-			ret = write(led_fds[led_id], "0", sizeof("0"));
-			if (ret < 0)
-				perror("write");
+			write_led(led_fds, led_id, false);
 
 			struct timespec ts = {.tv_sec = 0, .tv_nsec = 10000000};
 			nanosleep(&ts, NULL);
@@ -86,15 +101,7 @@ int main(int argc, char *argv[]) {
 				uint8_t row = font[(uint8_t)c][y];
 				int led_open = (row >> (7 - x)) & 1;
 
-				if (led_open) {
-					ret = write(led_fds[led_id], "1", sizeof("1"));
-					if (ret < 0)
-						perror("write");
-				} else {
-					ret = write(led_fds[led_id], "0", sizeof("0"));
-					if (ret < 0)
-						perror("write");
-				}
+				write_led(led_fds, led_id, led_open);
 
 				struct timespec ts = {.tv_sec = 0, .tv_nsec = 10000000};
 				nanosleep(&ts, NULL);

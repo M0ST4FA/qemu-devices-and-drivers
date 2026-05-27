@@ -9,6 +9,11 @@
 #define LUX_LED_DEVICE_NAME "lux-led"
 #define LUX_PLATFORM_DEVICE_NAME "lux-leds"
 
+#define LED_NAME_DEVICENAME ""
+#define LED_NAME_COLOR "rgb:"
+#define LED_NAME_FUNCTION "indicator"
+#define LED_NAME LED_NAME_DEVICENAME LED_NAME_COLOR LED_NAME_FUNCTION
+
 #define LUX_VENDOR_ID 0x1234
 #define LUX_DEVICE_ID 0x0001
 

@@ -21,6 +21,12 @@
 #define WAIT_BETWEEN_PIXELS_NS (10000000)
 #define WAIT_BETWEEN_CHARS_NS (200000000)
 #define ALARM_SEC (5)
+#define COLOR_STR_MAX_LEN (4 * 4)
+
+#define RED_SHIFT (8 * 0)
+#define GREEN_SHIFT (8 * 1)
+#define BLUE_SHIFT (8 * 2)
+#define ALPHA_SHIFT (8 * 3)
 
 struct led {
 	char led_name[64];
@@ -32,7 +38,7 @@ typedef typeof(struct led[LED_NR]) led_array;
 
 static inline void
 print_usage_exit(void) {
-	printf("Usage: print-to-led-sysfs <string>\n");
+	printf("Usage: print-to-mcled-sysfs <string>\n");
 	exit(EXIT_SUCCESS);
 }
 
@@ -94,7 +100,30 @@ static void close_sysfs_leds(led_array led_fds) {
 	}
 }
 
-static inline void write_led(led_array led_fds, int led_id, bool led_open) {
+static uint32_t get_wheel_color(int pos) {
+	pos = 255 - (pos % 255); // Ensure `pos` is within range
+	uint8_t r, g, b;
+
+	if (pos < 85) {
+		r = 255 - pos * 3;
+		g = 0;
+		b = pos * 3;
+	} else if (pos < 170) {
+		pos -= 85;
+		r = 0;
+		g = pos * 3;
+		b = 255 - pos * 3;
+	} else {
+		pos -= 170;
+		r = pos * 3;
+		g = 255 - pos * 3;
+		b = 0;
+	}
+
+	return (uint32_t)r << RED_SHIFT | (uint32_t)g << GREEN_SHIFT | (uint32_t)b << BLUE_SHIFT | 1U << ALPHA_SHIFT;
+}
+
+static inline void write_led(led_array led_fds, int led_id, char color_str[COLOR_STR_MAX_LEN], bool led_open) {
 	int ret = 0;
 	char buf[4] = {0};
 	int curr_brightness = 0;
@@ -102,8 +131,11 @@ static inline void write_led(led_array led_fds, int led_id, bool led_open) {
 	curr_brightness = atoi(buf);
 
 	if (led_open) {
+		if (*color_str == '\0') // If you pass "" as argument, we use the default
+			color_str = LED_DEFAULT_COLOR;
+
 		ret = pwrite(led_fds[led_id].multi_intensity,
-					 LED_DEFAULT_COLOR, strlen(LED_DEFAULT_COLOR), 0);
+					 color_str, strlen(color_str), 0);
 		if (ret < 0)
 			perror("write(multi_intensity)");
 
@@ -128,7 +160,7 @@ static inline void clear_led_grid(led_array led_fds) {
 		for (int x = 0; x < COL_NR; x++) {
 			int led_id = y * 8 + x;
 
-			write_led(led_fds, led_id, false);
+			write_led(led_fds, led_id, "", false);
 
 			struct timespec ts = {.tv_sec = 0, .tv_nsec = WAIT_BETWEEN_PIXELS_NS};
 			nanosleep(&ts, NULL);
@@ -191,7 +223,16 @@ int main(int argc, char *argv[]) {
 				uint8_t row = font[(uint8_t)c][y];
 				int led_open = (row >> (7 - x)) & 1;
 
-				write_led(led_fds, led_id, led_open);
+				int pos = (i * 15 + x * 10 + y * 10) % 256;
+
+				uint32_t color = get_wheel_color(pos);
+				char color_str[COLOR_STR_MAX_LEN] = {0};
+				snprintf(color_str, COLOR_STR_MAX_LEN, "%d %d %d",
+						 (uint8_t)(color >> RED_SHIFT),
+						 (uint8_t)(color >> GREEN_SHIFT),
+						 (uint8_t)(color >> BLUE_SHIFT));
+
+				write_led(led_fds, led_id, color_str, led_open);
 			}
 		}
 

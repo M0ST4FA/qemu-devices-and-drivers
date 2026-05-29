@@ -52,7 +52,7 @@ qemu-system-x86_64 \
 	-device vhost-vsock-pci,guest-cid=3 \
 	\
 	-device edu \
-	-device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/led-gpio.sock", "type":"unix"},"bus":"rp2","id":"led-gpio0"}' \
+	-device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/lux-f0.sock", "type":"unix"},"bus":"rp2","id":"lux-f0"}' \
 	\
 	-kernel ${KERNEL_PATH} \
 	-initrd ${INITRD_PATH} \

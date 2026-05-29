@@ -9,7 +9,7 @@
 #include "fsm.h"
 #include "mathaccel/include/hw.h"
 
-static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, off_t offset) {
+static ssize_t f0_bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, off_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = *((uint32_t *)buf);
 	printf("[HW] Write %u to offset 0x%lx\n\t", val, offset);
@@ -73,7 +73,7 @@ static ssize_t bar0_write(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]]
 	return 0;
 }
 
-static ssize_t bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, off_t offset) {
+static ssize_t f0_bar0_read(struct vfu_ctx *ctx, char *const buf, [[maybe_unused]] size_t count, off_t offset) {
 	struct math_device *dev = vfu_get_private(ctx);
 	uint32_t val = 0;
 
@@ -131,7 +131,7 @@ finish:
 /*
  * The MMIO callback. Fires each time the Linux guest tries to read or write memory from BAR0.
  * */
-ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t offset, const bool is_write) {
+ssize_t f0_bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t offset, const bool is_write) {
 
 	if (count != 4) {
 		// Force the driver to use 4 byte reads/writes
@@ -140,7 +140,7 @@ ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t of
 	}
 
 	if (is_write) {
-		if (bar0_write(vfu_ctx, buf, count, offset) == 0) {
+		if (f0_bar0_write(vfu_ctx, buf, count, offset) == 0) {
 			// sleep(2);					 // Delay for experiment with concurrency chaos
 			goto success;
 		} else {
@@ -148,7 +148,7 @@ ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t of
 		}
 	}
 
-	if (bar0_read(vfu_ctx, buf, count, offset) < 0)
+	if (f0_bar0_read(vfu_ctx, buf, count, offset) < 0)
 		goto error;
 
 success:

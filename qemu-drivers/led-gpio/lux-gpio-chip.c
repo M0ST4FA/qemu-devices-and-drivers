@@ -6,7 +6,7 @@
 #include <linux/platform_device.h>
 #include <linux/printk.h>
 
-#include "../../qemu-devices/led-gpio/include/hw.h"
+#include "../../qemu-devices/lux/include/hw.h"
 #include "linux/dev_printk.h"
 #include "linux/err.h"
 #include "linux/ioport.h"

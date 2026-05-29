@@ -10,7 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "../qemu-devices/led-gpio/include/hw.h"
+#include "../qemu-devices/lux/include/hw.h"
 #include "font.h"
 
 #define LED_DEFAULT_COLOR (0xFF00FFFF)

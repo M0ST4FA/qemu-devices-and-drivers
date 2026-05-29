@@ -7,19 +7,19 @@
 #include "libvfio-user.h"
 #include "logger.h"
 
-static inline ssize_t bar1_read(struct led_grid_device *device,
-								char *const buf, size_t count, loff_t offset) {
-	if (count == BAR1_REG_SIZE * 2) { // Writing both registers at once
+static inline ssize_t f0_bar1_read(struct lux_silicon *device,
+								   char *const buf, size_t count, loff_t offset) {
+	if (count == F0_BAR1_REG_SIZE * 2) { // Writing both registers at once
 		int led_id = offset / sizeof(struct smart_led);
 		struct smart_led *led = &device->leds[led_id];
-		memcpy(buf, led, BAR1_REG_SIZE * 2);
+		memcpy(buf, led, F0_BAR1_REG_SIZE * 2);
 
 		pr_log("debug", "op: READ LED, state: %d, color: %x",
 			   led->state, *(uint32_t *)led->color);
 
-	} else if (count == BAR1_REG_SIZE) {
+	} else if (count == F0_BAR1_REG_SIZE) {
 		int led_id = offset / sizeof(struct smart_led);
-		int reg_offset = offset % BAR1_REG_SIZE;
+		int reg_offset = offset % F0_BAR1_REG_SIZE;
 		struct smart_led *led = &device->leds[led_id];
 
 		if (reg_offset == REG_STATE) {
@@ -36,7 +36,7 @@ static inline ssize_t bar1_read(struct led_grid_device *device,
 	return count;
 }
 
-static inline int write_led_state(struct led_grid_device *device, int led_id, int32_t state) {
+static inline int write_led_state(struct lux_silicon *device, int led_id, int32_t state) {
 	int ret = 0;
 	int64_t mask = 1ULL << led_id;	 // Choose only the LED with `led_id`
 	int state_on = (state & 1) == 1; // Set or clear?
@@ -56,7 +56,7 @@ static inline int write_led_state(struct led_grid_device *device, int led_id, in
 	}
 };
 
-static inline int write_led_color(struct led_grid_device *device, int led_id, uint8_t color[4]) {
+static inline int write_led_color(struct lux_silicon *device, int led_id, uint8_t color[4]) {
 	int ret = 0;
 
 	ret = device_set_led_color(device, led_id, color);
@@ -71,10 +71,10 @@ static inline int write_led_color(struct led_grid_device *device, int led_id, ui
 	}
 }
 
-static inline int bar1_write_smart_led(struct led_grid_device *device,
-									   char *const buf, loff_t offset) {
+static inline int f0_bar1_write_smart_led(struct lux_silicon *device,
+										  char *const buf, loff_t offset) {
 	struct smart_led led;
-	memcpy(&led, buf, BAR1_REG_SIZE * 2);
+	memcpy(&led, buf, F0_BAR1_REG_SIZE * 2);
 	int led_id = offset / sizeof(struct smart_led);
 
 	if (write_led_state(device, led_id, led.state) < 0)
@@ -86,14 +86,14 @@ static inline int bar1_write_smart_led(struct led_grid_device *device,
 	return 0;
 }
 
-static inline int bar1_write_smart_led_component(struct led_grid_device *device,
-												 char *const buf, loff_t offset) {
+static inline int f0_bar1_write_smart_led_component(struct lux_silicon *device,
+													char *const buf, loff_t offset) {
 	// 1. Get LED id and register offset
 	int led_id = offset / sizeof(struct smart_led);
-	int reg_offset = offset % BAR1_REG_SIZE;
+	int reg_offset = offset % F0_BAR1_REG_SIZE;
 
 	// 2. Set values
-	switch ((enum bar1_regs)reg_offset) {
+	switch ((enum f0_bar1_regs)reg_offset) {
 		case REG_STATE:
 			if (write_led_state(device, led_id, *(uint32_t *)buf) < 0)
 				return -1;
@@ -108,17 +108,17 @@ static inline int bar1_write_smart_led_component(struct led_grid_device *device,
 	return 0;
 }
 
-static inline ssize_t bar1_write(struct led_grid_device *device,
-								 char *const buf, size_t count, loff_t offset) {
+static inline ssize_t f0_bar1_write(struct lux_silicon *device,
+									char *const buf, size_t count, loff_t offset) {
 	int ret = -1;
 
 	switch (count) {
-		case BAR1_REG_SIZE * 2:
-			ret = bar1_write_smart_led(device, buf, offset);
+		case F0_BAR1_REG_SIZE * 2:
+			ret = f0_bar1_write_smart_led(device, buf, offset);
 			break;
 
-		case BAR1_REG_SIZE:
-			ret = bar1_write_smart_led_component(device, buf, offset);
+		case F0_BAR1_REG_SIZE:
+			ret = f0_bar1_write_smart_led_component(device, buf, offset);
 			break;
 
 		default:
@@ -132,13 +132,13 @@ static inline ssize_t bar1_write(struct led_grid_device *device,
 		return count;
 }
 
-ssize_t bar1_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t offset, const bool is_write) {
-	struct led_grid_device *device = vfu_get_private(vfu_ctx);
+ssize_t f0_bar1_access(vfu_ctx_t *vfu_ctx, char *const buf, size_t count, loff_t offset, const bool is_write) {
+	struct lux_silicon *device = vfu_get_private(vfu_ctx);
 
 	if (is_write)
-		return bar1_write(device, buf, count, offset);
+		return f0_bar1_write(device, buf, count, offset);
 	else
-		return bar1_read(device, buf, count, offset);
+		return f0_bar1_read(device, buf, count, offset);
 
 	return 0;
 }

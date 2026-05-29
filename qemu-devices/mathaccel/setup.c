@@ -58,7 +58,7 @@ void setup_regions_and_irqs(struct vfu_ctx *vfu_ctx) {
 
 	// 1. Setup BAR 0
 	ret = vfu_setup_region(vfu_ctx, VFU_PCI_DEV_BAR0_REGION_IDX,
-						   4096, &bar0_access,
+						   4096, &f0_bar0_access,
 						   VFU_REGION_FLAG_RW | VFU_REGION_FLAG_MEM | VFU_REGION_FLAG_64_BITS,
 						   NULL, 0,
 						   -1, 0);

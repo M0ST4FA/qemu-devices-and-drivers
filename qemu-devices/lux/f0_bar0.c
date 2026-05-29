@@ -7,10 +7,10 @@
 #include "libvfio-user.h"
 #include "logger.h"
 
-static inline ssize_t bar0_read(struct led_grid_device *device,
-								char *const buf, size_t count, loff_t offset) {
+static inline ssize_t f0_bar0_read(struct lux_silicon *device,
+								   char *const buf, size_t count, loff_t offset) {
 
-	switch ((enum bar0_regs)offset) {
+	switch ((enum f0_bar0_regs)offset) {
 		case REG_MAGIC:
 			if (count != 4)
 				return -1;
@@ -44,17 +44,17 @@ static inline ssize_t bar0_read(struct led_grid_device *device,
 	}
 
 	if (count == 4)
-		pr_log("debug", "op: READ, reg: %s, val: %b", reg_names[offset], *(uint32_t *)buf);
+		pr_log("debug", "op: READ, reg: %s, val: %b", f0_reg_names[offset], *(uint32_t *)buf);
 	else if (count == 8)
-		pr_log("debug", "op: READ, reg: %s, val: %lb", reg_names[offset], *(uint64_t *)buf);
+		pr_log("debug", "op: READ, reg: %s, val: %lb", f0_reg_names[offset], *(uint64_t *)buf);
 
 	return count;
 }
 
-static inline ssize_t bar0_write(struct led_grid_device *device,
-								 char *const buf, size_t count, loff_t offset) {
+static inline ssize_t f0_bar0_write(struct lux_silicon *device,
+									char *const buf, size_t count, loff_t offset) {
 
-	switch ((enum bar0_regs)offset) {
+	switch ((enum f0_bar0_regs)offset) {
 		// RO registers
 		case REG_MAGIC:
 		case REG_VERSION:
@@ -111,21 +111,21 @@ static inline ssize_t bar0_write(struct led_grid_device *device,
 	}
 
 	if (count == 4)
-		pr_log("debug", "op: WRITE, reg: %s, val: %b", reg_names[offset], *(uint32_t *)buf);
+		pr_log("debug", "op: WRITE, reg: %s, val: %b", f0_reg_names[offset], *(uint32_t *)buf);
 	else if (count == 8)
-		pr_log("debug", "op: WRITE, reg: %s, val: %lb", reg_names[offset], *(uint64_t *)buf);
+		pr_log("debug", "op: WRITE, reg: %s, val: %lb", f0_reg_names[offset], *(uint64_t *)buf);
 
 	return count;
 }
 
-ssize_t bar0_access(vfu_ctx_t *vfu_ctx, char *const buf,
-					size_t count, loff_t offset, const bool is_write) {
-	struct led_grid_device *device = vfu_get_private(vfu_ctx);
+ssize_t f0_bar0_access(vfu_ctx_t *vfu_ctx, char *const buf,
+					   size_t count, loff_t offset, const bool is_write) {
+	struct lux_silicon *device = vfu_get_private(vfu_ctx);
 
 	if (is_write)
-		return bar0_write(device, buf, count, offset);
+		return f0_bar0_write(device, buf, count, offset);
 	else
-		return bar0_read(device, buf, count, offset);
+		return f0_bar0_read(device, buf, count, offset);
 
 	return 0;
 }

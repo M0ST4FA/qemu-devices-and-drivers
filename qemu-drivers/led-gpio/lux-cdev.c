@@ -10,7 +10,7 @@
 #include "linux/types.h"
 #include <linux/module.h>
 
-#include "../../qemu-devices/led-gpio/include/hw.h"
+#include "../../qemu-devices/lux/include/hw.h"
 #include "linux/uaccess.h"
 #include "lux.h"
 

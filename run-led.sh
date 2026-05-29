@@ -1,7 +1,7 @@
 #!/bin/sh
 killall led
-killall led-gpio
+killall lux
 
 ./build/devices/led/led &
 sleep 2
-./build/devices/led-gpio/led-gpio /tmp/led-gpio.sock &
+./build/devices/lux/lux /tmp/lux-f0.sock /tmp/lux-f1.sock &

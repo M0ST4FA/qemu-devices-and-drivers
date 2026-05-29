@@ -7,7 +7,7 @@
 #include "linux/err.h"
 #include "linux/export.h"
 
-#include "../../qemu-devices/led-gpio/include/hw.h"
+#include "../../qemu-devices/lux/include/hw.h"
 #include "linux/ioport.h"
 #include "lux.h"
 

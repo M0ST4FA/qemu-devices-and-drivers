@@ -12,7 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "../qemu-devices/led-gpio/include/hw.h"
+#include "../qemu-devices/lux/include/hw.h"
 #include "font.h"
 
 #define LED_DEFAULT_COLOR "41 51 92"
@@ -36,22 +36,9 @@ struct led {
 };
 typedef typeof(struct led[LED_NR]) led_array;
 
-static inline void
-print_usage_exit(void) {
+static inline void print_usage_exit(void) {
 	printf("Usage: print-to-mcled-sysfs <string>\n");
 	exit(EXIT_SUCCESS);
-}
-
-void get_led_from_char(const char c, int y, int x, struct smart_led *led) {
-	uint8_t row = font[(uint8_t)c][y];
-
-	int32_t led_state = (row >> (7 - x)) & 1;
-
-	led->state = led_state;
-	led->color[0] = 255;
-	led->color[1] = 255;
-	led->color[2] = 100;
-	led->color[3] = 255;
 }
 
 static int open_sysfs_leds(led_array led_fds) {

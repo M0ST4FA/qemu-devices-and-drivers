@@ -16,7 +16,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
-#include "../../qemu-devices/led-gpio/include/hw.h"
+#include "../../qemu-devices/lux/include/hw.h"
 #include "lux.h"
 
 static struct platform_device_id lux_platdev_ids[] = {

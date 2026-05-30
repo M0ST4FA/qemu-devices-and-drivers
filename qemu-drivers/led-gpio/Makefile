@@ -1,4 +1,4 @@
-obj-m += lux-core.o
+obj-m += lux-bus.o
 obj-m += lux-gpio-chip.o
 obj-m += lux-cdev.o
 obj-m += lux-regmap.o

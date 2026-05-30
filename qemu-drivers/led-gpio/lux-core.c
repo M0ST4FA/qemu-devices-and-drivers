@@ -14,7 +14,8 @@
 struct lux_device *global_lux = NULL;
 
 static const struct pci_device_id lux_id_table[] = {
-	{PCI_DEVICE(LUX_VENDOR_ID, LUX_DEVICE_ID)},
+	{PCI_DEVICE(LUX_VENDOR_ID, F0_DEVICE_ID)},
+	{PCI_DEVICE(LUX_VENDOR_ID, F1_DEVICE_ID)},
 	{0},
 };
 MODULE_DEVICE_TABLE(pci, lux_id_table);
@@ -139,29 +140,9 @@ struct pci_driver lux_pci_driver = {
 	.remove = lux_pci_remove,
 };
 
-module_pci_driver(lux_pci_driver);
 EXPORT_SYMBOL_GPL(global_lux);
 
-/* Already handled through `module_pci_driver()` macro
- * static int __init lux_core_init(void) {
-	int ret = 0;
-
-	ret = pci_register_driver(&lux_pci_driver);
-	if (ret < 0) {
-		pr_alert(LUX_CORE_DRIVER_NAME ": failed to register PCI driver");
-		return -1;
-	}
-
-	return 0;
-};
-
-static void __exit lux_core_exit(void) {
-	pci_unregister_driver(&lux_pci_driver);
-};
-
-module_init(lux_core_init);
-module_exit(lux_core_exit);
-*/
+module_pci_driver(lux_pci_driver);
 MODULE_AUTHOR("m0st4fa");
 MODULE_DESCRIPTION("PCI functionality for LED grid module");
 MODULE_LICENSE("GPL");

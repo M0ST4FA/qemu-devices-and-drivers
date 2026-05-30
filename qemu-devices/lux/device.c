@@ -119,28 +119,6 @@ static inline int device_setup_capabilities(struct lux_silicon *restrict device)
 	return 0;
 }
 
-static inline int device_connect_to_led_grid(struct lux_silicon *restrict device) {
-	int ret = 0;
-
-	device->f0_sock_fd = socket(PF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-	if (device->f0_sock_fd < 0) {
-		pr_log_libcerror(errno, "socket");
-		return -1;
-	}
-
-	struct sockaddr_un addr = {
-		.sun_family = AF_UNIX,
-		.sun_path = "\0" SERVER_SOCKET_NAME,
-	};
-	ret = connect(device->f0_sock_fd, (void *)&addr, sizeof(addr));
-	if (ret < 0) {
-		pr_log_libcerror(errno, "connect");
-		return -1;
-	}
-
-	return 0;
-}
-
 static int on_device_reset(vfu_ctx_t *ctx,
 						   [[maybe_unused]] enum vfu_reset_type type) {
 }
@@ -216,159 +194,76 @@ cleanup:
 	return -1;
 };
 
-uint64_t device_get_led_states(struct lux_silicon *restrict device) {
-	uint64_t states = 0; // 1 bit per led, in-order
+static inline int device_proccess_vfu_connection(vfu_ctx_t *restrict ctx,
+												 struct pollfd *restrict pfd,
+												 const char *restrict name,
+												 bool *restrict is_connected) {
+	int ret = 0;
 
-	for (int i = 0; i < LED_NR; i++) {
-		if (i >= 64) {
-			pr_log("debug",
-				   "LED states is overflowing! We use a uint64_t, one bit per lid, for state. It seems that there are more than 64 LEDs");
-			break; // Make hardware robust, to not break software
-		}
+	ret = vfu_run_ctx(ctx); /* Handle 1 or more requests
+										Returns number of handled requests.*/
 
-		struct smart_led *led = &device->leds[i];
-
-		const bool state = led->state & 1; // This should exclude each bit except bit 0
-		const uint64_t mask = ((uint64_t)state << i);
-		states |= mask;
-	}
-
-	return states;
-};
-int device_set_led_states(struct lux_silicon *restrict device, uint64_t states) {
-	uint64_t direction = device->direction;
-	int count = 0; // Number of leds we've set
-	struct led_command cmd = {0};
-
-	for (int i = 0; i < LED_NR; i++) {
-		// 1. Some necessary checks
-
-		if (!((states >> i) & 0x1)) // Not writing to this pin
-			continue;
-		else
-			pr_log("debug", "Setting pin %d", i);
-
-		if (((direction >> i) & 0x1) != LUX_DIRECTION_OUT) { // Not set for output
-			pr_log("error", "Trying to write to a GPIO pin marked for reading");
-			continue;
-		}
-
-		// 2. Update register GPIO controller register state
-		device->leds[i].state = 1; // Set bit 0 to 1
-
-		// 3. Send command to LED controller (this is just the GPIO controller)
-		cmd = (struct led_command){
-			.cmd = CMD_ON,
-			.led_id = i,
-			.color = {0}, // If you don't do this, you'll send whatever garbage was on the stack in its place
-		};
-		write(device->f0_sock_fd, &cmd, sizeof(cmd));
-		// Notice how protocol is async, which is nice. Loop doesn't have to block.
-		// Okay, it may block, but only in case socket write buffer is full.
-		// But we don't have to wait for a reply from server
-		count++;
-	}
-
-	return count;
-}
-int device_clr_led_states(struct lux_silicon *restrict device, uint64_t states) {
-	uint64_t direction = device->direction;
-	int count = 0; // Number of leds we've set
-	struct led_command cmd = {0};
-
-	for (int i = 0; i < LED_NR; i++) {
-		// 1. Some necessary checks
-
-		if (!((states >> i) & 0x1)) // Not writing to this pin
-			continue;
-		else
-			pr_log("debug", "Clearing pin %d", i);
-
-		if (((direction >> i) & 0x1) != LUX_DIRECTION_OUT) {
-			pr_log("error", "Trying to write to a GPIO pin marked for reading");
-			continue;
-		}
-
-		// 2. Update register GPIO controller register state
-		device->leds[i].state = 0; // Set bit 0 to 0
-
-		// 3. Send command to LED controller (this is just the GPIO controller)
-		cmd = (struct led_command){
-			.cmd = CMD_OFF,
-			.led_id = i,
-		};
-		write(device->f0_sock_fd, &cmd, sizeof(cmd));
-		// Notice how protocol is async, which is nice. Loop doesn't have to block.
-		// Okay, it may block, but only in case socket write buffer is full.
-		// But we don't have to wait for a reply from server
-		count++;
-	}
-
-	return count;
-}
-
-inline int device_set_led_color(struct lux_silicon *restrict device,
-								int32_t led_id, uint8_t color[4]) {
-	struct led_command cmd = {
-		.cmd = CMD_SET_COLOR,
-		.led_id = led_id,
-		.color = {color[0], color[1], color[2], color[3]},
-	};
-
-	struct smart_led *led = &device->leds[led_id];
-	memcpy(led->color, color, 4);
-
-	int ret = write(device->f0_sock_fd, &cmd, sizeof(cmd));
-	if (ret < 0) {
-		pr_log_libcerror(errno, "write(device_set_led_color)");
+	if (ret >= 0) {
+		// pr_log("debug", "vfu_run_ctx(%s): Handled %d requests", name, ret);
 		return ret;
 	}
 
-	return 0;
+	if (errno == EAGAIN || errno == EWOULDBLOCK)
+		return 0;
+
+	if (errno == ENOTCONN) {
+		pr_log("debug", "%s disconnected, waiting for new connection...", name);
+		*is_connected = false;
+
+		// CRITICAL: Must re-arm listening socket
+		ret = vfu_attach_ctx(ctx);
+		if (ret < 0 && (errno != EWOULDBLOCK && errno != EAGAIN)) {
+			pr_log("error", "vfu_attach_ctx(%s) re-arm: %s", name, strerror(errno));
+			return -1;
+		}
+		pfd->fd = vfu_get_poll_fd(ctx);
+		return 0;
+	}
+
+	pr_log("error", "vfu_run_ctx(%s): %s", name, strerror(errno));
+	return -1;
 }
 
-inline int device_get_led_color(struct lux_silicon *restrict device,
-								int32_t led_id, uint64_t *color) {
-	struct smart_led *led = &device->leds[led_id];
-
-	*color = *led->color;
-
-	return 0;
-}
-
-inline int device_handle_vfu_events(vfu_ctx_t *restrict ctx, struct pollfd *pfd, const char *name) {
+static inline int device_accept_vfu_connection(vfu_ctx_t *restrict ctx,
+											   struct pollfd *restrict pfd,
+											   const char *restrict name,
+											   bool *is_connected) {
 	int ret = 0;
+
+	ret = vfu_attach_ctx(ctx);
+
+	if (ret < 0 && errno != EWOULDBLOCK && errno != EAGAIN) {
+		pr_log("error", "vfu_attach_ctx(%s): %s", name, strerror(errno));
+		return -1;
+	}
+
+	pfd->fd = vfu_get_poll_fd(ctx);
+	*is_connected = true;
+	pr_log("debug", "%s connected...", name);
+
+	return 0;
+}
+
+int device_handle_vfu_events(vfu_ctx_t *restrict ctx, struct pollfd *pfd, const char *name, bool *is_connected) {
 
 	if (!(pfd->revents & POLLIN)) // No event to handle
 		return 0;
 
-	ret = vfu_run_ctx(ctx);
-
-	if (ret < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			return 0;
-
-		if (errno == ENOTCONN) {
-			pr_log("debug", "%s disconnected, waiting for new connection...", name);
-			if (vfu_attach_ctx(ctx) < 0) {
-				if (errno == EAGAIN || errno == EWOULDBLOCK)
-					return 0;
-
-				pr_log("error", "vfu_attach_ctx(%s): %s", name, strerror(errno));
-				return -1;
-			};
-			pfd->fd = vfu_get_poll_fd(ctx);
-		} else {
-			pr_log("error", "vfu_run_ctx(%s): %s", name, strerror(errno));
-			return -1;
-		}
-	}
+	if (*is_connected)
+		return device_proccess_vfu_connection(ctx, pfd, name, is_connected);
+	else
+		return device_accept_vfu_connection(ctx, pfd, name, is_connected);
 
 	return 0;
 };
 
 inline int device_run_eventloop(struct lux_silicon *device) {
-	int ret;
+	int ret, timeout = -1;
 
 	if (vfu_attach_ctx(device->f0_ctx) < 0) {
 		if (!(errno == EWOULDBLOCK || errno == EAGAIN)) {
@@ -403,25 +298,29 @@ inline int device_run_eventloop(struct lux_silicon *device) {
 	};
 
 	while (1) {
-		ret = poll(fds, sizeof(fds) / sizeof(fds[0]), 10);
+		timeout = TIMER_ENABLED(device) ? 10 : -1;
+		ret = poll(fds, sizeof(fds) / sizeof(fds[0]), timeout);
 		if (ret < 0 && errno != EINTR) {
 			pr_log_libcerror(errno, "poll");
 			return -1;
 		}
 
-		// 1. Hardware clock tick
+		// Always tick!
+		device_timer_tick(device);
 
 		if (ret == 0 || (ret < 0 && errno == EINTR))
 			continue;
 
-		// 2. Handle vfio-user command
-		if (device_handle_vfu_events(device->f0_ctx, &fds[0], "f0") < 0)
+		// 1. Handle vfio-user command
+		if (device_handle_vfu_events(device->f0_ctx, &fds[0],
+									 "f0", &device->f0_is_connected) < 0)
 			return -1;
 
-		if (device_handle_vfu_events(device->f1_ctx, &fds[1], "f1") < 0)
+		if (device_handle_vfu_events(device->f1_ctx, &fds[1],
+									 "f1", &device->f1_is_connected) < 0)
 			return -1;
 
-		// 3. Handle LED device
+		// 2. Handle LED device
 		// We can only read disconnections as we're the producer of the socket
 		if (fds[2].revents & (POLLERR | POLLHUP)) {
 			pr_log("error", "LED device disconnected. Shutting down GPIO server...");

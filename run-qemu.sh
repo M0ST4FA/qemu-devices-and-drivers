@@ -52,7 +52,8 @@ qemu-system-x86_64 \
 	-device vhost-vsock-pci,guest-cid=3 \
 	\
 	-device edu \
-	-device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/lux-f0.sock", "type":"unix"},"bus":"rp2","id":"lux-f0"}' \
+	-device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/lux-f0.sock", "type":"unix"},"bus":"rp2","id":"lux-f0","multifunction":true,"addr":"00.0"}' \
+	-device '{"driver":"vfio-user-pci","socket":{"path":"/tmp/lux-f1.sock", "type":"unix"},"bus":"rp2","id":"lux-f1","addr":"00.1"}' \
 	\
 	-kernel ${KERNEL_PATH} \
 	-initrd ${INITRD_PATH} \

@@ -261,16 +261,19 @@ static int lux_init_f1_device(struct lux_device *device) {
 	return 0;
 }
 
-static inline int lux_device_init(struct lux_device *device, const struct pci_device_id *id) {
+static inline int lux_device_init(struct lux_device *device,
+								  struct pci_dev *pdev, const struct pci_device_id *id) {
 
 	if (id->device == F0_DEVICE_ID) {
 		device->dev_id = LUX_F0_DEV_ID;
+		device->pdev = pdev;
 		if (lux_init_f0_device(device) < 0)
 			return -1;
 	} else if (id->device == F1_DEVICE_ID) {
 		device->dev_id = LUX_F1_DEV_ID;
-		if (lux_init_f1_device(device) < 0)
-			return -1;
+		device->pdev = pdev;
+		// if (lux_init_f1_device(device) < 0)
+		// 	return -1;
 	} else { // This should catch a painful bug :|
 		pr_err(LUX_BUS_NAME ": Unkown device (PCI device ID: %d)", id->device);
 		return -1;
@@ -286,12 +289,16 @@ static int lux_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 	int ret;
 
 	// 1. Create and initialize device structure
-	struct lux_device *device = kzalloc(sizeof(struct device *), GFP_KERNEL);
-	ret = lux_device_init(device, id);
+	struct lux_device *device = kzalloc(sizeof(struct lux_device), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(device))
+		return -ENOMEM;
+
+	ret = lux_device_init(device, pdev, id);
 	if (ret < 0) {
 		dev_err(&pdev->dev, ": Bus failed to initialize lux device\n");
 		goto cleanup;
 	}
+	list_add_tail(&device->node, &lux_device_list);
 
 	// 2. Probe for any matching driver
 	struct lux_driver *driver = NULL;
@@ -326,15 +333,12 @@ cleanup:
 static void lux_pci_remove([[maybe_unused]] struct pci_dev *pdev) {
 	// 1. Tell all drivers their device is vanishing
 
-	struct lux_device *device = NULL;
+	struct lux_device *device = pci_get_drvdata(pdev);
 
-	list_for_each_entry(device, &lux_device_list, node) {
-		device->driver->remove(device);
-		list_del(&device->node);
-		lux_device_destroy(device);
-	}
-
-	BUG_ON(!list_empty(&lux_device_list));
+	device->driver->remove(device);
+	list_del(&device->node);
+	lux_device_destroy(device);
+	kfree(device);
 }
 
 struct pci_driver lux_pci_driver = {

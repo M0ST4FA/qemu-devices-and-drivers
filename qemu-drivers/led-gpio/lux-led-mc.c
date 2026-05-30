@@ -76,11 +76,6 @@ static int lux_mc_led_platform_probe(struct platform_device *platdev) {
 	struct device *dev = &platdev->dev;
 	struct lux_mc_led *leds;
 
-	if (!global_lux || !global_lux->bar[1]) {
-		dev_err(&platdev->dev, "Global lux data structure is not allocated yet, or BAR 1 is not yet allocated\n");
-		return -ENODEV;
-	}
-
 	leds = devm_kcalloc(dev, 64, sizeof(struct lux_mc_led), GFP_KERNEL);
 	if (!leds)
 		return -ENOMEM;

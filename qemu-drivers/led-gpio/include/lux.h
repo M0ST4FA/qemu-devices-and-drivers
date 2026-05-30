@@ -1,11 +1,11 @@
 #pragma once
-#include "linux/types.h"
 #include <linux/cdev.h>
 #include <linux/pci.h>
+#include <linux/types.h>
 
 #define LUX_BUS_NAME "lux-bus"
 #define LUX_CHIP_LABEL "lux-gpio-chip"
-#define LUX_CHAR_DEVICE_NAME "lux-chardev"
+#define LUX_CHAR_DRIVER_NAME "lux-chardev"
 #define LUX_CLASS_NAME "lux"
 #define LUX_LED_DEVICE_NAME "lux-led"
 #define LUX_PLATFORM_DEVICE_NAME "lux-leds"
@@ -23,15 +23,13 @@ struct lux_driver;
 struct lux_device;
 
 struct lux_device {
-	// Used for matchmaking
-	int dev_id;
+	int dev_id; // Used for matchmaking
 	struct lux_driver *driver;
-	struct pci_dev *pdev;
-	struct cdev cdev;
-	dev_t cdev_id;
-	struct device *device;
-	void __iomem *bar[6];
 	void *prv_data;
+
+	struct pci_dev *pdev;
+	void __iomem *bar[6];
+
 	struct list_head node; // Allows the bus to keep a list of devices
 };
 

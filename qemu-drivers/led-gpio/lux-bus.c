@@ -334,9 +334,18 @@ static void lux_pci_remove([[maybe_unused]] struct pci_dev *pdev) {
 	// 1. Tell all drivers their device is vanishing
 
 	struct lux_device *device = pci_get_drvdata(pdev);
+	if (!device)
+		return;
 
-	device->driver->remove(device);
+	mutex_lock(&lux_bus_mutex);
+
+	if (device->driver)
+		device->driver->remove(device);
+
 	list_del(&device->node);
+
+	mutex_unlock(&lux_bus_mutex);
+
 	lux_device_destroy(device);
 	kfree(device);
 }
@@ -352,6 +361,7 @@ EXPORT_SYMBOL_GPL(lux_register_driver);
 EXPORT_SYMBOL_GPL(lux_unregister_driver);
 
 module_pci_driver(lux_pci_driver);
+
 MODULE_AUTHOR("m0st4fa");
 MODULE_DESCRIPTION("PCI functionality for LED grid module");
 MODULE_LICENSE("GPL");

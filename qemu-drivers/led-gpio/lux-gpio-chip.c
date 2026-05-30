@@ -1,4 +1,3 @@
-#include "asm/io.h"
 #include <linux/gpio/driver.h>
 #include <linux/gpio/machine.h>
 #include <linux/init.h>
@@ -133,8 +132,16 @@ static int lux_driver_gpio_probe(struct lux_device *device) {
 
 	// 1. Allocate private data struct
 	struct lux_gpio_chip *lux_gpio_chip = kzalloc(sizeof(struct lux_gpio_chip), GFP_KERNEL);
-	if (lux_gpio_chip == NULL)
-		return -ENOMEM;
+	if (lux_gpio_chip == NULL) {
+		ret = -ENOMEM;
+		goto cleanup;
+	}
+
+	lux_gpio_chip->chip = kzalloc(sizeof(struct gpio_chip), GFP_KERNEL);
+	if (lux_gpio_chip->chip == NULL) {
+		ret = -ENOMEM;
+		goto cleanup;
+	}
 
 	*lux_gpio_chip->chip = (struct gpio_chip){
 		.label = LUX_CHIP_LABEL,
@@ -201,14 +208,16 @@ cleanup:
 	if (!IS_ERR_OR_NULL(lux_gpio_chip->led_platdev))
 		platform_device_unregister(lux_gpio_chip->led_platdev);
 
-	if (lux_gpio_chip->led_lookup) {
+	if (lux_gpio_chip && lux_gpio_chip->led_lookup) {
 		gpiod_remove_lookup_table(lux_gpio_chip->led_lookup);
 		kfree(lux_gpio_chip->led_lookup);
 		lux_gpio_chip->led_lookup = NULL;
 	}
 
-	if (lux_gpio_chip->chip)
+	if (lux_gpio_chip && lux_gpio_chip->chip) {
 		gpiochip_remove(lux_gpio_chip->chip);
+		kfree(lux_gpio_chip->chip);
+	}
 
 	if (lux_gpio_chip)
 		kfree(lux_gpio_chip);
@@ -222,6 +231,7 @@ static void lux_driver_gpio_remove(struct lux_device *device) {
 	platform_device_unregister(lux_gpio_chip->led_platdev);
 	gpiod_remove_lookup_table(lux_gpio_chip->led_lookup);
 	gpiochip_remove(lux_gpio_chip->chip);
+	kfree(lux_gpio_chip->chip);
 	kfree(lux_gpio_chip);
 }
 

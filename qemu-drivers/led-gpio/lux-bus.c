@@ -32,7 +32,7 @@ int lux_register_driver(struct lux_driver *restrict driver) {
 	mutex_lock(&lux_bus_mutex);
 
 	// 1. Add the driver to our permenant list
-	list_add_tail(&lux_driver_list, &driver->node);
+	list_add_tail(&driver->node, &lux_driver_list);
 
 	// 2. Try matching the driver against any existing device
 	list_for_each_entry(device, &lux_device_list, node) {

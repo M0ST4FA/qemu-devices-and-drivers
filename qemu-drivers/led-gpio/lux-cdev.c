@@ -1,3 +1,4 @@
+#include "asm-generic/barrier.h"
 #include "asm/io.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
@@ -6,6 +7,7 @@
 #include "linux/err.h"
 #include "linux/fs.h"
 #include "linux/gfp_types.h"
+#include "linux/pci.h"
 #include "linux/printk.h"
 #include "linux/slab.h"
 #include "linux/stddef.h"
@@ -134,6 +136,12 @@ static int lux_driver_cdev_probe(struct lux_device *lux_device) {
 		ret = PTR_ERR(lux_cdev->device);
 		goto cleanup;
 	}
+
+	// 4. Set LED direction to output
+	writeq(0xFFFFFFFFFFFFFFFFULL, lux_device->bar[0] + REG_DIRECTION);
+	// Make sure direction is *REALLY* written before we continue
+	wmb();
+	readq(lux_device->bar[0] + REG_DIRECTION);
 
 	pr_info(LUX_CHAR_DRIVER_NAME ": Probe finished successfully!");
 

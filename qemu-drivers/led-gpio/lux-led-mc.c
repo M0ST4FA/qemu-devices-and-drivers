@@ -84,12 +84,14 @@ static int lux_mc_led_platform_probe(struct platform_device *platdev) {
 	if (!leds)
 		return -ENOMEM;
 
-	struct resource *res = (void __iomem *)platform_get_resource(platdev, IORESOURCE_MEM, 0);
+	struct resource *res = platform_get_resource(platdev, IORESOURCE_MEM, 0);
 	if (!res) {
 		dev_err(dev, "Failed to get IORESOURCE_MEM\n");
 		return -ENOMEM;
 	}
 
+	// NOTE: Resource already acquired by PCI device. Just map it to kernel virtual address space.
+	// This mapping might be redundant but it makes things clear.
 	iomem_base = devm_ioremap(&platdev->dev, res->start, resource_size(res));
 	if (!iomem_base)
 		return -ENOMEM;

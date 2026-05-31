@@ -43,3 +43,4 @@ struct lux_driver {
 
 int lux_register_driver(struct lux_driver *);
 void lux_unregister_driver(struct lux_driver *);
+

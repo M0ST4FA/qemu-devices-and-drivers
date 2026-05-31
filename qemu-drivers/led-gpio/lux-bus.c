@@ -28,8 +28,8 @@ static DEFINE_MUTEX(lux_bus_mutex); // Big Bus Lock (BBL)
 
 int lux_register_driver(struct lux_driver *restrict driver) {
 	struct lux_device *device;
-	bool matched_devices = 0;
-	bool successful_probes = 0;
+	uint matched_devices = 0;
+	uint successful_probes = 0;
 
 	mutex_lock(&lux_bus_mutex);
 
@@ -44,7 +44,7 @@ int lux_register_driver(struct lux_driver *restrict driver) {
 		matched_devices++;
 
 		if (device->driver) { // Device is already matched to a driver, i.e., device exists but is busy
-			pr_alert(LUX_BUS_NAME ": Device (dev_id: 0x%x) is already bound driver '%s'. Can't bind to driver '%s'.\n",
+			pr_alert(LUX_BUS_NAME ": Device (dev_id: 0x%x) is already bound to driver '%s'. Can't bind to driver '%s'.\n",
 					 device->dev_id, device->driver->name, driver->name);
 			continue;
 		}

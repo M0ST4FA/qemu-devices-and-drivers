@@ -7,6 +7,8 @@
 #include "linux/device/devres.h"
 #include "linux/gfp_types.h"
 #include "linux/init.h"
+#include "linux/io.h"
+#include "linux/ioport.h"
 #include "linux/mod_devicetable.h"
 #include <linux/err.h>
 #include <linux/gpio/consumer.h>
@@ -38,6 +40,7 @@ struct lux_mc_led {
 	struct led_classdev_mc clsdev;
 	struct mc_subled subled_info[3];
 	int led_id;
+	void __iomem *iomem_base;
 };
 
 static void lux_mc_led_set_brightness(struct led_classdev *led_clsdev,
@@ -46,7 +49,7 @@ static void lux_mc_led_set_brightness(struct led_classdev *led_clsdev,
 	struct lux_mc_led *lux_led = container_of(mc_clsdev, struct lux_mc_led, clsdev);
 
 	// 1. Get the physical pointer for this LED
-	void __iomem *led_base = global_lux->bar[1] + (lux_led->led_id * sizeof(struct smart_led));
+	void __iomem *led_base = lux_led->iomem_base;
 	struct smart_led led_data = {0};
 	led_mc_calc_color_components(mc_clsdev, brightness);
 
@@ -75,15 +78,27 @@ static int lux_mc_led_platform_probe(struct platform_device *platdev) {
 	int ret = 0;
 	struct device *dev = &platdev->dev;
 	struct lux_mc_led *leds;
+	void __iomem *iomem_base = NULL;
 
 	leds = devm_kcalloc(dev, 64, sizeof(struct lux_mc_led), GFP_KERNEL);
 	if (!leds)
+		return -ENOMEM;
+
+	struct resource *res = (void __iomem *)platform_get_resource(platdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(dev, "Failed to get IORESOURCE_MEM\n");
+		return -ENOMEM;
+	}
+
+	iomem_base = devm_ioremap(&platdev->dev, res->start, resource_size(res));
+	if (!iomem_base)
 		return -ENOMEM;
 
 	for (int i = 0; i < 64; i++) {
 		struct lux_mc_led *led = leds + i;
 
 		led->led_id = i;
+		led->iomem_base = iomem_base + (led->led_id * sizeof(struct smart_led));
 
 		// 1. Setup subleds
 		led->subled_info[COLOR_RED].color_index = LED_COLOR_ID_RED;

@@ -6,10 +6,9 @@
 #include <linux/printk.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
-#include "linux/device/devres.h"
 #include "linux/err.h"
-#include "linux/ioport.h"
 #include "linux/overflow.h"
+#include "linux/pci.h"
 #include "linux/slab.h"
 #include "lux.h"
 
@@ -17,7 +16,7 @@ struct lux_gpio_chip {
 	struct gpio_chip *chip;
 	struct gpiod_lookup_table *led_lookup;
 	struct platform_device *led_platdev;
-	struct resource led_platdev_resources[0]; // Empty for now
+	struct resource led_platdev_resources[1]; // Empty for now
 };
 
 static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, int value) {
@@ -192,8 +191,14 @@ static int lux_driver_gpio_probe(struct lux_device *device) {
 	// Notice that normally, you don't create a device; the driver model core creates it for you
 	// Here we are creating a device
 	// Name is used for driver matching, id indicates instance number (-1 if the only instance)
+	lux_gpio_chip->led_platdev_resources[0] = (struct resource){
+		.name = LUX_PLATFORM_DEVICE_NAME "-smart-memory",
+		.start = pci_resource_start(device->pdev, 1),
+		.end = pci_resource_end(device->pdev, 1),
+		.flags = pci_resource_flags(device->pdev, 1),
+	};
 	lux_gpio_chip->led_platdev = platform_device_register_simple(LUX_PLATFORM_DEVICE_NAME, -1,
-																 lux_gpio_chip->led_platdev_resources, 0);
+																 lux_gpio_chip->led_platdev_resources, 1);
 	if (IS_ERR(lux_gpio_chip->led_platdev)) {
 		pr_err(LUX_CHIP_LABEL ": Failed to register platform device");
 		ret = PTR_ERR(lux_gpio_chip->led_platdev);

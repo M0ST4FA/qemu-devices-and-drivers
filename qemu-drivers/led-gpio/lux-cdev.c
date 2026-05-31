@@ -114,6 +114,8 @@ static int lux_driver_cdev_probe(struct lux_device *lux_device) {
 		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to allocate major and minor numbers for lux device");
 		return ret;
 	}
+	lux_cdev->lux_device = lux_device;
+	lux_device->prv_data = lux_cdev;
 
 	// 2. Register with VFS
 	cdev_init(&lux_cdev->cdev, &lux_fops);
@@ -133,6 +135,8 @@ static int lux_driver_cdev_probe(struct lux_device *lux_device) {
 		goto cleanup;
 	}
 
+	pr_info(LUX_CHAR_DRIVER_NAME ": Probe finished successfully!");
+
 	return 0;
 
 cleanup:
@@ -148,7 +152,7 @@ cleanup:
 	if (cdev_added)
 		cdev_del(&lux_cdev->cdev);
 
-	return 0;
+	return ret;
 }
 
 static void lux_driver_cdev_remove([[maybe_unused]] struct lux_device *lux_device) {

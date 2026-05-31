@@ -28,6 +28,8 @@ static DEFINE_MUTEX(lux_bus_mutex); // Big Bus Lock (BBL)
 
 int lux_register_driver(struct lux_driver *restrict driver) {
 	struct lux_device *device;
+	bool matched_devices = 0;
+	bool successful_probes = 0;
 
 	mutex_lock(&lux_bus_mutex);
 
@@ -36,19 +38,38 @@ int lux_register_driver(struct lux_driver *restrict driver) {
 
 	// 2. Try matching the driver against any existing device
 	list_for_each_entry(device, &lux_device_list, node) {
-		if (device->driver) // Device is already matched to a driver
-			continue;
-
 		if (driver->supported_dev_id != device->dev_id)
 			continue;
 
+		matched_devices++;
+
+		if (device->driver) { // Device is already matched to a driver, i.e., device exists but is busy
+			pr_alert(LUX_BUS_NAME ": Device (dev_id: 0x%x) is already bound driver '%s'. Can't bind to driver '%s'.\n",
+					 device->dev_id, device->driver->name, driver->name);
+			continue;
+		}
+
 		if (driver->probe) {
 			if (driver->probe(device) < 0)
-				pr_alert(LUX_BUS_NAME ": Probe failed (dev_id: %d)\n", device->dev_id);
-			else
+				pr_alert(LUX_BUS_NAME ": Probe failed (dev_id: 0x%x) for driver '%s'\n",
+						 device->dev_id, device->driver->name);
+			else {
 				device->driver = driver;
+				successful_probes++;
+			}
 		}
 	};
+
+	// If we couldn't bind this driver to a device, EVENTHOUGH at least one device exists
+	if (matched_devices > 0 && successful_probes == 0) {
+		// We found hardware be we couldn't bind driver to it
+
+		// We must remove the driver from the list so that it doesn't become a zombie
+		list_del(&driver->node);
+
+		mutex_unlock(&lux_bus_mutex);
+		return -EBUSY; // This should prevent the module from loading (and deallocate the driver)
+	}
 
 	mutex_unlock(&lux_bus_mutex);
 
@@ -71,6 +92,9 @@ void lux_unregister_driver(struct lux_driver *restrict driver) {
 
 	// 2. Remove driver
 	list_del(&driver->node); // We don't need to deallocate anything; driver storage is managed by module (consumer).
+
+	// 3. TODO: Try to match again against existing devices
+	// If you don't do so, we would need to rmmod and then insmod the module to be bound
 
 	mutex_unlock(&lux_bus_mutex);
 }
@@ -275,7 +299,7 @@ static inline int lux_device_init(struct lux_device *device,
 		// if (lux_init_f1_device(device) < 0)
 		// 	return -1;
 	} else { // This should catch a painful bug :|
-		pr_err(LUX_BUS_NAME ": Unkown device (PCI device ID: %d)", id->device);
+		pr_err(LUX_BUS_NAME ": Unkown device (PCI device ID: 0x%x)", id->device);
 		return -1;
 	}
 
@@ -309,10 +333,10 @@ static int lux_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 		if (driver->supported_dev_id != device->dev_id)
 			continue;
 
-		pr_info(LUX_BUS_NAME ": Probing new device (id: %d) with matching driver\n", device->dev_id);
+		pr_info(LUX_BUS_NAME ": Probing new device (id: 0x%x) with matching driver\n", device->dev_id);
 		if (driver->probe)
 			if (driver->probe(device) < 0)
-				pr_alert(LUX_BUS_NAME ": Probe failed (dev_id: %d)\n", device->dev_id);
+				pr_alert(LUX_BUS_NAME ": Probe failed (dev_id: 0x%x)\n", device->dev_id);
 	};
 
 	mutex_unlock(&lux_bus_mutex);
@@ -331,8 +355,6 @@ cleanup:
 }
 
 static void lux_pci_remove([[maybe_unused]] struct pci_dev *pdev) {
-	// 1. Tell all drivers their device is vanishing
-
 	struct lux_device *device = pci_get_drvdata(pdev);
 	if (!device)
 		return;

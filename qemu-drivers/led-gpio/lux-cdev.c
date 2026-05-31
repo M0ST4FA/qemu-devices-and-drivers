@@ -1,5 +1,6 @@
 #include "asm-generic/barrier.h"
-#include "asm/io.h"
+#include "asm-generic/memory_model.h"
+#include "asm/pgtable.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
 #include "linux/device.h"
@@ -7,6 +8,9 @@
 #include "linux/err.h"
 #include "linux/fs.h"
 #include "linux/gfp_types.h"
+#include "linux/mm.h"
+#include "linux/mm_types.h"
+#include "linux/page-flags.h"
 #include "linux/pci.h"
 #include "linux/printk.h"
 #include "linux/slab.h"
@@ -93,6 +97,33 @@ static ssize_t lux_smart_read(struct file *filp, char *buf,
 	return count;
 }
 
+static int lux_smart_mmap(struct file *filp, struct vm_area_struct *vma) {
+	int ret = 0;
+	struct lux_cdev *lux_cdev = filp->private_data;
+	int len = vma->vm_end - vma->vm_start;
+
+	// 1. Get physical memory of BAR 1 (memory region of smart LEDs)
+	resource_size_t led_iomem_phys = pci_resource_start(lux_cdev->lux_device->pdev, 1);
+	if (!led_iomem_phys)
+		return -ENODEV;
+
+	// 2. Set correct protection attributes of pages and perform the mapping
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	ret = io_remap_pfn_range(vma, vma->vm_start,
+							 PHYS_PFN(led_iomem_phys),
+							 len,
+							 vma->vm_page_prot);
+	if (ret < 0) {
+		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to map physical address to proccess memory area (err: %d)", ret);
+		return ret;
+	}
+
+	pr_info(LUX_CHAR_DRIVER_NAME ": Mapped virtual memory (addr: %lx) of proc (PID: %d) to physical memory (addr: %llx)\n",
+			vma->vm_start, current->pid, led_iomem_phys);
+
+	return 0;
+}
+
 static struct file_operations lux_fops = {
 	.owner = THIS_MODULE,
 	.open = lux_smart_open,
@@ -100,6 +131,7 @@ static struct file_operations lux_fops = {
 	.write = lux_smart_write,
 	.read = lux_smart_read,
 	.llseek = default_llseek,
+	.mmap = lux_smart_mmap,
 };
 
 static int lux_driver_cdev_probe(struct lux_device *lux_device) {

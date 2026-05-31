@@ -24,18 +24,6 @@ static inline void print_usage_exit(void) {
 	exit(EXIT_SUCCESS);
 }
 
-void get_led_from_char(const char c, int y, int x, struct smart_led *led) {
-	uint8_t row = font[(uint8_t)c][y];
-
-	int32_t led_state = (row >> (7 - x)) & 1;
-
-	led->state = led_state;
-	led->color[0] = 255;
-	led->color[1] = 255;
-	led->color[2] = 100;
-	led->color[3] = 255;
-}
-
 static int open_sysfs_leds(int led_fds[LED_NR]) {
 	char led_name[64] = {0};
 

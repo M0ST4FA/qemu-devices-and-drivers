@@ -28,6 +28,8 @@ struct lux_device {
 	void *prv_data;
 
 	struct pci_dev *pdev;
+
+	// Virtual addresses of the BARs
 	void __iomem *bar[6];
 
 	struct list_head node; // Allows the bus to keep a list of devices
@@ -43,4 +45,3 @@ struct lux_driver {
 
 int lux_register_driver(struct lux_driver *);
 void lux_unregister_driver(struct lux_driver *);
-

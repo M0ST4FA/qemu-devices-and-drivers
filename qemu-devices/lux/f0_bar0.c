@@ -41,6 +41,10 @@ static inline ssize_t f0_bar0_read(struct lux_silicon *device,
 		case REG_SET:
 		case REG_CLR:
 			return -1;
+
+		default:
+			pr_log("error", "Reading from unkown register\n");
+			return -1;
 	}
 
 	if (count == 4)
@@ -108,6 +112,10 @@ static inline ssize_t f0_bar0_write(struct lux_silicon *device,
 				device_clr_led_states(device, to_clr);
 			}
 			break;
+
+		default:
+			pr_log("error", "Writing into unkown register (offset: %ld)\n", offset);
+			return -1;
 	}
 
 	if (count == 4)

@@ -10,6 +10,7 @@
 #define LUX_CLASS_NAME "lux"
 #define LUX_LED_DEVICE_NAME "lux-led"
 #define LUX_PLATFORM_DEVICE_NAME "lux-leds"
+#define LUX_IRQ_DRIVER_NAME "lux-irq"
 
 #define LED_NAME_DEVICENAME ""
 #define LED_NAME_COLOR "rgb:"

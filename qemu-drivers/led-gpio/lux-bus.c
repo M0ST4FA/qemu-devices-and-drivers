@@ -13,6 +13,7 @@
 #include "linux/mutex.h"
 #include "linux/printk.h"
 #include "linux/slab.h"
+#include "linux/types.h"
 #include "lux.h"
 
 static const struct pci_device_id lux_id_table[] = {
@@ -44,6 +45,7 @@ int lux_register_driver(struct lux_driver *restrict driver) {
 		matched_devices++;
 
 		if (device->driver) { // Device is already matched to a driver, i.e., device exists but is busy
+
 			pr_alert(LUX_BUS_NAME ": Device (dev_id: 0x%x) is already bound to driver '%s'. Can't bind to driver '%s'.\n",
 					 device->dev_id, device->driver->name, driver->name);
 			continue;
@@ -52,7 +54,7 @@ int lux_register_driver(struct lux_driver *restrict driver) {
 		if (driver->probe) {
 			if (driver->probe(device) < 0)
 				pr_alert(LUX_BUS_NAME ": Probe failed (dev_id: 0x%x) for driver '%s'\n",
-						 device->dev_id, device->driver->name);
+						 device->dev_id, driver->name);
 			else {
 				device->driver = driver;
 				successful_probes++;
@@ -216,41 +218,32 @@ static int lux_request_f1_pci_bars(struct device *dev,
 	if (!parent)
 		return -EBUSY;
 
-	// TODO: Think about these; maybe they are useful
-	// resources[0] = (struct resource){
-	// 	.name = "magic",
-	// 	.start = bar0->start + REG_MAGIC,
-	// 	.end = bar0->start + REG_MAGIC + 3,
-	// 	.flags = IORESOURCE_MEM,
-	// };
-	// resources[1] = (struct resource){
-	// 	.name = "version",
-	// 	.start = bar0->start + REG_VERSION,
-	// 	.end = bar0->start + REG_VERSION + 3,
-	// 	.flags = IORESOURCE_MEM,
-	// };
+	const resource_size_t irq_start = bar0->start + REG_IRQ_STATUS;
+	const resource_size_t irq_end = irq_start + 4 * 3 - 1;
 
-	// TODO: Needs extensive modification
+	const resource_size_t timer_start = irq_end + 1;
+	const resource_size_t timer_end = timer_start + (4 * 1) + (8 * 2) - 1;
+
 	resources[0] = (struct resource){
 		.name = "lux-irq",
-		.start = bar0->start + REG_DIRECTION,
-		.end = bar0->start + REG_DIRECTION + 8 * 3,
-		.flags = IORESOURCE_MEM,
+		.start = irq_start,
+		.end = irq_end,
+		.flags = resource_type(bar0),
 	};
 	resources[1] = (struct resource){
 		.name = "lux-timer",
-		.start = bar0->start,
-		.end = bar0->start + sizeof(struct smart_led) * LED_NR - 1,
-		.flags = IORESOURCE_MEM,
+		.start = timer_start,
+		.end = timer_end,
+		.flags = resource_type(bar0),
 	};
 
 	if (devm_request_resource(dev, parent, resources) < 0) {
-		dev_err(dev, "Failed to claim magic register\n");
+		dev_err(dev, "Failed to claim IRQ chip registers\n");
 		return -EBUSY;
 	};
 
 	if (devm_request_resource(dev, parent, resources + 1) < 0) {
-		dev_err(dev, "Failed to claim version register\n");
+		dev_err(dev, "Failed to claim timer chip registers\n");
 		return -EBUSY;
 	};
 
@@ -297,11 +290,11 @@ static inline int lux_device_init(struct lux_device *device,
 	} else if (id->device == F1_DEVICE_ID) {
 		device->dev_id = LUX_F1_DEV_ID;
 		device->pdev = pdev;
-		// if (lux_init_f1_device(device) < 0)
-		// 	return -1;
+		if (lux_init_f1_device(device) < 0)
+			return -1;
 	} else { // This should catch a painful bug :|
 		pr_err(LUX_BUS_NAME ": Unkown device (PCI device ID: 0x%x)", id->device);
-		return -1;
+		return -ENODEV;
 	}
 
 	return 0;

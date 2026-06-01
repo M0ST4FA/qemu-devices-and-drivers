@@ -65,7 +65,13 @@ int device_get_led_color(struct lux_silicon *restrict device,
 
 // TIMER
 
-#define TIMER_BIT (1ULL)
+#define TIMER_BIT (1ULL << 0)
+#define IRQ_BIT (1ULL << 1)
+#define RELOAD_BIT (1ULL << 2)
+
 #define TIMER_ENABLED(device) (device->timer_ctrl & TIMER_BIT)
+#define TIMER_IRQ_ENABLED(device) (device->timer_ctrl & IRQ_BIT)
+#define TIMER_RELOAD_ENABLED(device) (device->timer_ctrl & RELOAD_BIT)
 
 int device_timer_tick(struct lux_silicon *restrict device);
+int device_irq_tick(struct lux_silicon *restrict device);

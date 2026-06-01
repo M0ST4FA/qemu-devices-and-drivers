@@ -7,7 +7,6 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "../led/include/protocol.h"
 #include "bar.h"
 #include "device.h"
 #include "hw.h"
@@ -114,13 +113,45 @@ static inline int device_setup_irqs(vfu_ctx_t *ctx, int count) {
 	return 0;
 }
 
+static struct msicap msi_cap = {
+	.hdr.id = PCI_CAP_ID_MSI,
+	.hdr.next = 0,
+	.mc = {
+		.msie = 0, // MSI Enable; start disabled
+		.mmc = 0,  // Multi Messages Capable, 0 = 1, 2 = 2, 2 = 4
+		.c64 = 1,  // 64-bit addresses
+		.pvm = 0,  // Per-vector masking
+	},
+};
+
 static inline int device_setup_capabilities(struct lux_silicon *restrict device) {
+	int ret = 0;
+
+	ret = vfu_pci_add_capability(device->f1_ctx, 0, 0, &msi_cap);
+	if (ret < 0)
+		pr_log_libcerror(errno, "vfu_pci_add_capability(f1)");
 
 	return 0;
 }
 
 static int on_device_reset(vfu_ctx_t *ctx,
 						   [[maybe_unused]] enum vfu_reset_type type) {
+	const char *reset_type_name[] = {
+		[VFU_RESET_DEVICE] = "RESET_DEVICE",
+		[VFU_RESET_LOST_CONN] = "RESET_LOST_CONN",
+		[VFU_RESET_PCI_FLR] = "RESET_PCI_FLR"};
+
+	switch (type) {
+
+		case VFU_RESET_DEVICE:
+		case VFU_RESET_LOST_CONN:
+		case VFU_RESET_PCI_FLR:
+			break;
+	}
+
+	pr_log("debug", "Device reset requests. Reset type: %s\n", reset_type_name[type]);
+
+	return 0;
 }
 
 static void on_dma_register([[maybe_unused]] vfu_ctx_t *ctx,
@@ -154,6 +185,11 @@ int device_init(struct lux_silicon *restrict device, const char *f0_sock_path, c
 	ret = vfu_setup_device_reset_cb(device->f0_ctx, on_device_reset);
 	if (ret < 0) {
 		pr_log_libcerror(errno, "vfu_setup_device_reset_cb(f0)");
+		goto cleanup;
+	}
+	ret = vfu_setup_device_reset_cb(device->f1_ctx, on_device_reset);
+	if (ret < 0) {
+		pr_log_libcerror(errno, "vfu_setup_device_reset_cb(f1)");
 		goto cleanup;
 	}
 
@@ -307,6 +343,7 @@ inline int device_run_eventloop(struct lux_silicon *device) {
 
 		// Always tick!
 		device_timer_tick(device);
+		device_irq_tick(device);
 
 		if (ret == 0 || (ret < 0 && errno == EINTR))
 			continue;

@@ -75,3 +75,17 @@ static const char *f1_reg_names[] = {
 	[REG_TIMER_TIME] = "REG_TIMER_TIME",
 	[REG_TIMER_CMP] = "REG_TIMER_CMP",
 };
+
+// Assignment of IRQs to physical pins. This is always hardcoded even in real hardware.
+// In real hardware, the assignment of devices to physical pins is announced via DT or ACPI
+// or their equivalent.
+// Here, we announce assignments through this enum
+enum hwirqs {
+	HWIRQ_TIMER = 0,
+	HWIRQ_COUNT, // Number of assigned pins (NOTE: pins must be contiguous; driver relies on that for mapping to virqs.)
+};
+
+[[maybe_unused]]
+static const char *hwirq_names[] = {
+	[HWIRQ_TIMER] = "TIMER_IRQ",
+};

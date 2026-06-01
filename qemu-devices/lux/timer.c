@@ -2,6 +2,7 @@
 #include <time.h>
 
 #include "device.h"
+#include "hw.h"
 
 int device_timer_tick(struct lux_silicon *restrict device) {
 
@@ -18,7 +19,8 @@ int device_timer_tick(struct lux_silicon *restrict device) {
 
 	device->timer_val += elapsed;
 
-	vfu_irq_trigger(device->f1_ctx, 0);
+	if (TIMER_IRQ_ENABLED(device) && device->timer_val >= device->timer_cmp)
+		device->irq_status |= (1U << HWIRQ_TIMER);
 
 	return 0;
 }

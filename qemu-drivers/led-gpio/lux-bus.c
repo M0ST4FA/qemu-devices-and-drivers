@@ -176,7 +176,8 @@ static int lux_init_f0_device(struct lux_device *device) {
 		return ret;
 	}
 
-	ret = lux_request_f0_pci_bars(&pdev->dev, &pdev->resource[0], &pdev->resource[1]);
+	ret = lux_request_f0_pci_bars(&pdev->dev, pci_resource_n(pdev, 0),
+								  pci_resource_n(pdev, 1));
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to request PCI BARs\n");
 		return ret;

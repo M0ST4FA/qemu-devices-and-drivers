@@ -11,8 +11,10 @@
 #include <unistd.h>
 
 #include "../qemu-devices/lux/include/hw.h"
+#include "../qemu-drivers/led-gpio/include/lux_ioctl.h"
 #include "font.h"
 
+#define GPIO_OUT_MASK (0xFFFFFFFFFFFFFFFFULL)
 #define WAIT_BETWEEN_PIXELS_NS (10000000)
 #define WAIT_BETWEEN_CHARS_NS (20000000)
 
@@ -43,9 +45,17 @@ int main(int argc, char *argv[]) {
 	const char *str = argv[1];
 	size_t str_len = strlen(str);
 
-	lux_fd = open("/dev/lux-0", O_RDWR | O_CLOEXEC);
+	lux_fd = open("/dev/lux-0", O_RDWR | O_CLOEXEC | O_SYNC);
 	if (lux_fd < 0)
 		err(EXIT_FAILURE, "open %s", "/dev/lux-0");
+
+	if (ioctl(lux_fd, LUX_IOCTL_SET_DIRECTION_OUT, GPIO_OUT_MASK) < 0)
+		err(EXIT_FAILURE, "ioctl SET_DIRECTION_OUT %s", "/dev/lux-0");
+
+	struct lux_hw_info info;
+	if (ioctl(lux_fd, LUX_IOCTL_GET_INFO, &info) < 0)
+		err(EXIT_FAILURE, "ioctl GET_INFO %s", "/dev/lux-0");
+	printf("LEDS: %d, ROWS: %d, COLS: %d\n", info.num_leds, info.rows, info.cols);
 
 	leds = mmap(NULL, LED_NR * sizeof(struct smart_led), PROT_WRITE,
 				MAP_FILE | MAP_SHARED, lux_fd, 0);
@@ -73,6 +83,9 @@ int main(int argc, char *argv[]) {
 		struct timespec ts = {.tv_sec = 0, .tv_nsec = WAIT_BETWEEN_CHARS_NS};
 		clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL);
 	}
+
+	if (ioctl(lux_fd, LUX_IOCTL_CLEAR_SCREEN) < 0)
+		err(EXIT_FAILURE, "ioctl CLEAR_SCREEN %s", "/dev/lux-0");
 
 	close(lux_fd);
 

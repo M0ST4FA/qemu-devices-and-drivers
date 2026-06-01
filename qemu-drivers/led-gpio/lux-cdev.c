@@ -1,5 +1,6 @@
 #include "asm-generic/barrier.h"
-#include "asm-generic/memory_model.h"
+#include "asm-generic/ioctl.h"
+#include "asm/io.h"
 #include "asm/pgtable.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
@@ -10,7 +11,6 @@
 #include "linux/gfp_types.h"
 #include "linux/mm.h"
 #include "linux/mm_types.h"
-#include "linux/page-flags.h"
 #include "linux/pci.h"
 #include "linux/printk.h"
 #include "linux/slab.h"
@@ -21,6 +21,7 @@
 
 #include "../../qemu-devices/lux/include/hw.h"
 #include "lux.h"
+#include "lux_ioctl.h"
 
 struct class *lux_class;
 
@@ -118,8 +119,60 @@ static int lux_smart_mmap(struct file *filp, struct vm_area_struct *vma) {
 		return ret;
 	}
 
-	pr_info(LUX_CHAR_DRIVER_NAME ": Mapped virtual memory (addr: %lx) of proc (PID: %d) to physical memory (addr: %llx)\n",
+	pr_info(LUX_CHAR_DRIVER_NAME ": Mapped virtual memory (addr: 0x%lx) of proc (PID: %d) to physical memory (addr: 0x%llx)\n",
 			vma->vm_start, current->pid, led_iomem_phys);
+
+	return 0;
+}
+
+static long lux_smart_ioctl(struct file *filp, uint cmd, ulong arg) {
+	struct lux_cdev *lux_cdev = filp->private_data;
+	void __iomem *bar0 = lux_cdev->lux_device->bar[0];
+
+	// Command not recognized (more specifically, not for this device)
+	if (_IOC_TYPE(cmd) != LUX_IOCTL_MAGIC)
+		return -ENOTTY;
+
+	switch (cmd) {
+		case LUX_IOCTL_CLEAR_SCREEN:
+			writeq(0x0ULL, bar0 + REG_DATA);
+			wmb();
+			readq(bar0 + REG_DIRECTION);
+			break;
+
+		case LUX_IOCTL_SET_DIRECTION_OUT:
+			writeq(arg, bar0 + REG_DIRECTION);
+			wmb();
+			readq(bar0 + REG_DIRECTION);
+			break;
+
+		case LUX_IOCTL_SET_DIRECTION_IN:
+			writeq(~arg, bar0 + REG_DIRECTION);
+			wmb();
+			readq(bar0 + REG_DIRECTION);
+			break;
+
+		case LUX_IOCTL_GET_INFO: {
+#define LED_COLS 8
+#define LED_ROWS 8
+
+			struct lux_hw_info hw_info = {
+				.num_leds = LED_NR,
+				.cols = LED_COLS,
+				.rows = LED_ROWS,
+			};
+
+			if (copy_to_user((void __user *)arg, &hw_info, sizeof(hw_info)))
+				return -EFAULT;
+
+		} break;
+
+		default:
+			// Command not recognized
+			return -ENOTTY;
+	}
+
+	pr_info(LUX_CHAR_DRIVER_NAME ": Serviced ioctl %s\n", ioctl_names[_IOC_NR(cmd)]);
 
 	return 0;
 }
@@ -132,6 +185,7 @@ static struct file_operations lux_fops = {
 	.read = lux_smart_read,
 	.llseek = default_llseek,
 	.mmap = lux_smart_mmap,
+	.unlocked_ioctl = lux_smart_ioctl,
 };
 
 static int lux_driver_cdev_probe(struct lux_device *lux_device) {
@@ -168,12 +222,6 @@ static int lux_driver_cdev_probe(struct lux_device *lux_device) {
 		ret = PTR_ERR(lux_cdev->device);
 		goto cleanup;
 	}
-
-	// 4. Set LED direction to output
-	writeq(0xFFFFFFFFFFFFFFFFULL, lux_device->bar[0] + REG_DIRECTION);
-	// Make sure direction is *REALLY* written before we continue
-	wmb();
-	readq(lux_device->bar[0] + REG_DIRECTION);
 
 	pr_info(LUX_CHAR_DRIVER_NAME ": Probe finished successfully!");
 

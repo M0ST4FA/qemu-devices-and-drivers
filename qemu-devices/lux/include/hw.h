@@ -31,6 +31,7 @@ enum f0_bar0_regs {
 	REG_CLR = 0x20,		  // 8 bytes
 };
 
+[[maybe_unused]]
 static const char *f0_reg_names[] = {
 	[REG_MAGIC] = "REG_MAGIC",
 	[REG_VERSION] = "REG_VERSION",
@@ -63,6 +64,8 @@ enum f1_bar0_regs {
 	REG_TIMER_TIME = 0x10, // 8 bytes, RO, 64-bit timestamp since timer started
 	REG_TIMER_CMP = 0x18,  // 8 bytes, RW, The value at which timer fires an IRQ
 };
+
+[[maybe_unused]]
 static const char *f1_reg_names[] = {
 	[REG_IRQ_STATUS] = "REG_IRQ_STATUS",
 	[REG_IRQ_MASK] = "REG_IRQ_MASK",

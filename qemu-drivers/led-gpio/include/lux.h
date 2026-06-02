@@ -4,7 +4,7 @@
 #include <linux/pci.h>
 #include <linux/types.h>
 
-#define LUX_BUS_NAME "lux-bus"
+#define LUX_BUS_NAME "lux-core"
 #define LUX_CHIP_LABEL "lux-gpio-chip"
 #define LUX_CHAR_DRIVER_NAME "lux-chardev"
 #define LUX_CLASS_NAME "lux"

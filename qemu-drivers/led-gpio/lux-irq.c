@@ -201,8 +201,7 @@ static void lux_driver_irq_remove(struct platform_device *platdev) {
 
 	irq_domain_remove(lux_chip->irq_domain);
 
-	// NOTE: Do not do this. pdev is enabled using pcim_ interface
-	// pci_free_irq_vectors(lux_function->pdev);
+	pci_free_irq_vectors(lux_function->pdev);
 
 	// Not needed because lifetime of device is attached to `lux_function`
 	// kfree(lux_irq_chip); // Note: Will lead to double-free bug

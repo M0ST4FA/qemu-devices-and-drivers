@@ -27,7 +27,7 @@ static void lux_irq_mask(struct irq_data *data) {
 	void __iomem *mask_addr = lux_chip->base + REG_IRQ_MASK;
 	uint32_t mask = readl(mask_addr);
 
-	mask &= (1U << data->hwirq);
+	mask |= (1U << data->hwirq);
 	writel(mask, mask_addr);
 };
 static void lux_irq_unmask(struct irq_data *data) {
@@ -35,7 +35,7 @@ static void lux_irq_unmask(struct irq_data *data) {
 	void __iomem *mask_addr = lux_chip->base + REG_IRQ_MASK;
 	uint32_t mask = readl(mask_addr);
 
-	mask |= ~(1U << data->hwirq);
+	mask &= ~(1U << data->hwirq);
 	writel(mask, mask_addr);
 };
 static void lux_irq_ack(struct irq_data *data) {
@@ -95,7 +95,7 @@ static void lux_irq_chained_handler(struct irq_desc *desc) {
 
 	uint32_t status = readl(lux_chip->base + REG_IRQ_STATUS);
 	uint32_t mask = readl(lux_chip->base + REG_IRQ_MASK);
-	uint32_t pending = status & mask;
+	uint32_t pending = status & ~mask;
 
 	// Dispatch each pending child irq
 	while (pending) {

@@ -19,8 +19,9 @@ int device_timer_tick(struct lux_silicon *restrict device) {
 
 	device->timer_val += elapsed;
 
-	if (TIMER_IRQ_ENABLED(device) && device->timer_val >= device->timer_cmp)
+	if (TIMER_IRQ_ENABLED(device) && TIMER_TRIGGER_VAL_REACHED(device)) {
 		device->irq_status |= (1U << HWIRQ_TIMER);
+	}
 
 	return 0;
 }

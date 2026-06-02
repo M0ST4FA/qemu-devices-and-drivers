@@ -141,7 +141,6 @@ static int lux_driver_irq_probe(struct lux_device *lux_device) {
 		return -ENOMEM;
 	lux_device->prv_data = lux_chip;
 
-	lux_chip->irq_domain = lux_irq_domain;
 	// Guaranteed to succeed (otherwise, laoding pci-bus would've failed)
 	lux_chip->base = lux_device->bar[0];
 	// Mask all for security; you don't want an interrupt to fire now
@@ -161,6 +160,8 @@ static int lux_driver_irq_probe(struct lux_device *lux_device) {
 		pr_err(LUX_IRQ_DRIVER_NAME ": Failed to register IRQ domain (err: %ld)\n", PTR_ERR(lux_irq_domain));
 		return PTR_ERR(lux_irq_domain);
 	}
+	lux_chip->irq_domain = lux_irq_domain;
+
 	// 4. Map hwirqs from our chip to virqs through the domain
 	if (create_hwirq_virq_mappings(lux_chip) < 0) {
 		pr_err(LUX_IRQ_DRIVER_NAME ": Failed to map hwirqs exposed by chip to Linux virqs\n");

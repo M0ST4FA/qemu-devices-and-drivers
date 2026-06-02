@@ -1,6 +1,5 @@
 #include "asm-generic/barrier.h"
 #include "asm-generic/ioctl.h"
-#include "asm/io.h"
 #include "asm/pgtable.h"
 #include "linux/cdev.h"
 #include "linux/container_of.h"
@@ -9,9 +8,11 @@
 #include "linux/err.h"
 #include "linux/fs.h"
 #include "linux/gfp_types.h"
+#include "linux/init.h"
 #include "linux/mm.h"
 #include "linux/mm_types.h"
 #include "linux/pci.h"
+#include "linux/platform_device.h"
 #include "linux/printk.h"
 #include "linux/slab.h"
 #include "linux/stddef.h"
@@ -26,7 +27,7 @@
 struct class *lux_class;
 
 struct lux_cdev {
-	struct lux_device *lux_device;
+	struct lux_function *lux_function;
 	struct cdev cdev;
 	struct device *device;
 	dev_t cdev_id;
@@ -64,7 +65,7 @@ static ssize_t lux_smart_write(struct file *filp, const char *buf,
 	if (copy_from_user(&led, buf, sizeof(struct smart_led)))
 		return -EFAULT;
 
-	void *led_base = device->lux_device->bar[1] + led_id * sizeof(struct smart_led);
+	void *led_base = device->lux_function->bar[1] + led_id * sizeof(struct smart_led);
 
 	writeq(*(uint64_t *)&led, led_base);
 
@@ -86,7 +87,7 @@ static ssize_t lux_smart_read(struct file *filp, char *buf,
 		return -ERANGE;
 
 	led_id = *offset / sizeof(struct smart_led);
-	void *led_base = device->lux_device->bar[1] + led_id * sizeof(struct smart_led);
+	void *led_base = device->lux_function->bar[1] + led_id * sizeof(struct smart_led);
 
 	*(uint64_t *)&led = readq(led_base);
 
@@ -104,7 +105,7 @@ static int lux_smart_mmap(struct file *filp, struct vm_area_struct *vma) {
 	int len = vma->vm_end - vma->vm_start;
 
 	// 1. Get physical memory of BAR 1 (memory region of smart LEDs)
-	resource_size_t led_iomem_phys = pci_resource_start(lux_cdev->lux_device->pdev, 1);
+	resource_size_t led_iomem_phys = pci_resource_start(lux_cdev->lux_function->pdev, 1);
 	if (!led_iomem_phys)
 		return -ENODEV;
 
@@ -127,7 +128,7 @@ static int lux_smart_mmap(struct file *filp, struct vm_area_struct *vma) {
 
 static long lux_smart_ioctl(struct file *filp, uint cmd, ulong arg) {
 	struct lux_cdev *lux_cdev = filp->private_data;
-	void __iomem *bar0 = lux_cdev->lux_device->bar[0];
+	void __iomem *bar0 = lux_cdev->lux_function->bar[0];
 
 	// Command not recognized (more specifically, not for this device)
 	if (_IOC_TYPE(cmd) != LUX_IOCTL_MAGIC)
@@ -188,9 +189,11 @@ static struct file_operations lux_fops = {
 	.unlocked_ioctl = lux_smart_ioctl,
 };
 
-static int lux_driver_cdev_probe(struct lux_device *lux_device) {
+static int lux_driver_cdev_probe(struct platform_device *platdev) {
 	int ret = 0;
 	bool cdev_added = false;
+	struct device *parent_dev = platdev->dev.parent;
+	struct lux_function *lux_function = dev_get_drvdata(parent_dev);
 
 	// 1. Allocate private data
 	struct lux_cdev *lux_cdev = kzalloc(sizeof(struct lux_cdev), GFP_KERNEL);
@@ -202,8 +205,8 @@ static int lux_driver_cdev_probe(struct lux_device *lux_device) {
 		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to allocate major and minor numbers for lux device");
 		return ret;
 	}
-	lux_cdev->lux_device = lux_device;
-	lux_device->prv_data = lux_cdev;
+	lux_cdev->lux_function = lux_function;
+	platform_set_drvdata(platdev, lux_cdev);
 
 	// 2. Register with VFS
 	cdev_init(&lux_cdev->cdev, &lux_fops);
@@ -243,8 +246,8 @@ cleanup:
 	return ret;
 }
 
-static void lux_driver_cdev_remove([[maybe_unused]] struct lux_device *lux_device) {
-	struct lux_cdev *lux_cdev = lux_device->prv_data;
+static void lux_driver_cdev_remove([[maybe_unused]] struct platform_device *platdev) {
+	struct lux_cdev *lux_cdev = platform_get_drvdata(platdev);
 
 	if (!IS_ERR_OR_NULL(lux_cdev->device)) {
 		device_destroy(lux_class, lux_cdev->cdev_id);
@@ -257,9 +260,11 @@ static void lux_driver_cdev_remove([[maybe_unused]] struct lux_device *lux_devic
 	cdev_del(&lux_cdev->cdev);
 }
 
-static struct lux_driver lux_driver = {
-	.name = LUX_CHAR_DRIVER_NAME,
-	.supported_dev_id = LUX_F0_DEV_ID,
+static struct platform_driver lux_cdev_platdev_driver = {
+	.driver = {
+		.name = LUX_CHAR_DRIVER_NAME,
+		.owner = THIS_MODULE,
+	},
 	.probe = lux_driver_cdev_probe,
 	.remove = lux_driver_cdev_remove,
 };
@@ -274,11 +279,11 @@ static int __init lux_cdev_init(void) {
 		goto cleanup;
 	}
 
-	ret = lux_register_driver(&lux_driver);
+	ret = platform_driver_register(&lux_cdev_platdev_driver);
 	if (ret < 0) {
-		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to register character driver with lux bus\n");
+		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to register platform driver.\n");
 		goto cleanup;
-	};
+	}
 
 	return 0;
 cleanup:
@@ -292,13 +297,14 @@ cleanup:
 }
 
 static void __exit lux_cdev_exit(void) {
-	lux_unregister_driver(&lux_driver); // Calls the remove function for each device
 
 	// This MUST come later after devices have been removed
 	if (!IS_ERR_OR_NULL(lux_class)) {
 		class_destroy(lux_class);
 		lux_class = NULL;
 	}
+
+	platform_driver_unregister(&lux_cdev_platdev_driver);
 }
 
 module_init(lux_cdev_init);

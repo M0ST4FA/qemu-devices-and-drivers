@@ -20,7 +20,14 @@ int device_timer_tick(struct lux_silicon *restrict device) {
 	device->timer_val += elapsed;
 
 	if (TIMER_IRQ_ENABLED(device) && TIMER_TRIGGER_VAL_REACHED(device)) {
+		// Trigger irq line with chip
 		device->irq_status |= (1U << HWIRQ_TIMER);
+
+		// Handle autoreloading
+		if (TIMER_RELOAD_ENABLED(device))
+			device->timer_val = 0;
+		else
+			device->timer_ctrl &= ~IRQ_BIT;
 	}
 
 	return 0;

@@ -11,6 +11,7 @@
 #define LUX_LED_DEVICE_NAME "lux-led"
 #define LUX_PLATFORM_DEVICE_NAME "lux-leds"
 #define LUX_IRQ_DRIVER_NAME "lux-irq"
+#define LUX_TIMER_DRIVER_NAME "lux-timer"
 
 #define LED_NAME_DEVICENAME ""
 #define LED_NAME_COLOR "rgb:"
@@ -22,12 +23,12 @@
 #define LUX_F1_DEV_ID 0x5555
 
 struct lux_driver;
-struct lux_device;
+struct lux_function;
 
-struct lux_device {
+struct lux_function {
 	int dev_id; // Used for matchmaking
-	struct lux_driver *driver;
 	void *prv_data;
+	struct irq_domain *irq_domain;
 
 	struct pci_dev *pdev;
 
@@ -36,14 +37,3 @@ struct lux_device {
 
 	struct list_head node; // Allows the bus to keep a list of devices
 };
-
-struct lux_driver {
-	const char *name;
-	int supported_dev_id; // A driver can support only one, so no need for ID table
-	typeof(int(struct lux_device *)) *probe;
-	typeof(void(struct lux_device *)) *remove;
-	struct list_head node; // Allows the bus to keep a list of drivers
-};
-
-int lux_register_driver(struct lux_driver *);
-void lux_unregister_driver(struct lux_driver *);

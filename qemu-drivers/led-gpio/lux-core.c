@@ -1,105 +1,20 @@
 #include "asm-generic/pci_iomap.h"
+#include "linux/array_size.h"
 #include "linux/dev_printk.h"
 #include "linux/device.h"
 #include "linux/device/devres.h"
 #include "linux/err.h"
-#include "linux/export.h"
 #include "linux/ioport.h"
+#include "linux/mutex.h"
+#include "linux/platform_device.h"
+#include "linux/printk.h"
+#include "linux/types.h"
+#include <linux/mfd/core.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
-#include "linux/list.h"
-#include "linux/mutex.h"
-#include "linux/printk.h"
-#include "linux/slab.h"
-#include "linux/types.h"
 #include "lux.h"
-
-static const struct pci_device_id lux_id_table[] = {
-	{PCI_DEVICE(VENDOR_ID, F0_DEVICE_ID)},
-	{PCI_DEVICE(VENDOR_ID, F1_DEVICE_ID)},
-	{0},
-};
-MODULE_DEVICE_TABLE(pci, lux_id_table);
-
-static LIST_HEAD(lux_device_list);	// List of PCI devices (encapsulated in struct lux_device) of known IDs
-static LIST_HEAD(lux_driver_list);	// List of registered drivers
-static DEFINE_MUTEX(lux_bus_mutex); // Big Bus Lock (BBL)
-
-int lux_register_driver(struct lux_driver *restrict driver) {
-	struct lux_device *device;
-	uint matched_devices = 0;
-	uint successful_probes = 0;
-
-	mutex_lock(&lux_bus_mutex);
-
-	// 1. Add the driver to our permenant list
-	list_add_tail(&driver->node, &lux_driver_list);
-
-	// 2. Try matching the driver against any existing device
-	list_for_each_entry(device, &lux_device_list, node) {
-		if (driver->supported_dev_id != device->dev_id)
-			continue;
-
-		matched_devices++;
-
-		if (device->driver) { // Device is already matched to a driver, i.e., device exists but is busy
-
-			pr_alert(LUX_BUS_NAME ": Device (dev_id: 0x%x) is already bound to driver '%s'. Can't bind to driver '%s'.\n",
-					 device->dev_id, device->driver->name, driver->name);
-			continue;
-		}
-
-		if (driver->probe) {
-			if (driver->probe(device) < 0)
-				pr_alert(LUX_BUS_NAME ": Probe failed (dev_id: 0x%x) for driver '%s'\n",
-						 device->dev_id, driver->name);
-			else {
-				device->driver = driver;
-				successful_probes++;
-			}
-		}
-	};
-
-	// If we couldn't bind this driver to a device, EVENTHOUGH at least one device exists
-	if (matched_devices > 0 && successful_probes == 0) {
-		// We found hardware be we couldn't bind driver to it
-
-		// We must remove the driver from the list so that it doesn't become a zombie
-		list_del(&driver->node);
-
-		mutex_unlock(&lux_bus_mutex);
-		return -EBUSY; // This should prevent the module from loading (and deallocate the driver)
-	}
-
-	mutex_unlock(&lux_bus_mutex);
-
-	return 0;
-}
-
-void lux_unregister_driver(struct lux_driver *restrict driver) {
-	struct lux_device *device = NULL;
-
-	mutex_lock(&lux_bus_mutex);
-
-	// 1. Notice devices that the driver is being removed
-	list_for_each_entry(device, &lux_device_list, node) {
-		if (device->driver != driver) // Device not matched to this driver
-			continue;
-
-		driver->remove(device);
-		device->driver = NULL;
-	}
-
-	// 2. Remove driver
-	list_del(&driver->node); // We don't need to deallocate anything; driver storage is managed by module (consumer).
-
-	// 3. TODO: Try to match again against existing devices
-	// If you don't do so, we would need to rmmod and then insmod the module to be bound
-
-	mutex_unlock(&lux_bus_mutex);
-}
 
 static int lux_request_f0_pci_bars(struct device *dev,
 								   struct resource *bar0,
@@ -168,7 +83,7 @@ static int lux_request_f0_pci_bars(struct device *dev,
 	return 0;
 }
 
-static int lux_init_f0_device(struct lux_device *device) {
+static int lux_init_f0_device(struct lux_function *device) {
 	int ret;
 	struct pci_dev *pdev = device->pdev;
 
@@ -250,7 +165,7 @@ static int lux_request_f1_pci_bars(struct device *dev,
 	return 0;
 }
 
-static int lux_init_f1_device(struct lux_device *device) {
+static int lux_init_f1_device(struct lux_function *device) {
 	int ret;
 	struct pci_dev *pdev = device->pdev;
 
@@ -279,8 +194,8 @@ static int lux_init_f1_device(struct lux_device *device) {
 	return 0;
 }
 
-static inline int lux_device_init(struct lux_device *device,
-								  struct pci_dev *pdev, const struct pci_device_id *id) {
+static inline int lux_function_init(struct lux_function *device,
+									struct pci_dev *pdev, const struct pci_device_id *id) {
 
 	if (id->device == F0_DEVICE_ID) {
 		device->dev_id = LUX_F0_DEV_ID;
@@ -300,81 +215,86 @@ static inline int lux_device_init(struct lux_device *device,
 	return 0;
 }
 
-static inline void lux_device_destroy(struct lux_device *device) { // Does nothing for now
-}
+static struct mfd_cell lux_f0_cells[] = {
+	{
+		.name = LUX_CHIP_LABEL,
+		.id = PLATFORM_DEVID_AUTO,
+	},
+	{
+		.name = LUX_CHAR_DRIVER_NAME,
+		.id = PLATFORM_DEVID_AUTO,
+	},
+};
+
+static struct mfd_cell lux_f1_cells[] = {
+	{
+		.name = LUX_IRQ_DRIVER_NAME,
+		.id = PLATFORM_DEVID_AUTO,
+	},
+	{
+		.name = LUX_TIMER_DRIVER_NAME,
+		.id = PLATFORM_DEVID_AUTO,
+	},
+};
 
 static int lux_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 	int ret;
 
 	// 1. Create and initialize device structure
-	struct lux_device *device = kzalloc(sizeof(struct lux_device), GFP_KERNEL);
+	struct lux_function *device = devm_kzalloc(&pdev->dev,
+											   sizeof(struct lux_function), GFP_KERNEL);
 	if (IS_ERR_OR_NULL(device))
 		return -ENOMEM;
 
-	ret = lux_device_init(device, pdev, id);
+	ret = lux_function_init(device, pdev, id);
 	if (ret < 0) {
 		dev_err(&pdev->dev, ": Bus failed to initialize lux device\n");
 		goto cleanup;
 	}
-	list_add_tail(&device->node, &lux_device_list);
 
-	// 2. Probe for any matching driver
-	struct lux_driver *driver = NULL;
+	// 2. Spawn MFD device
+	if (device->dev_id == LUX_F0_DEV_ID) {
+		ret = devm_mfd_add_devices(&pdev->dev, PLATFORM_DEVID_AUTO,
+								   lux_f0_cells, ARRAY_SIZE(lux_f0_cells),
+								   NULL, 0, NULL);
 
-	mutex_lock(&lux_bus_mutex);
-
-	list_for_each_entry(driver, &lux_driver_list, node) {
-		if (driver->supported_dev_id != device->dev_id)
-			continue;
-
-		pr_info(LUX_BUS_NAME ": Probing new device (id: 0x%x) with matching driver\n", device->dev_id);
-		if (driver->probe)
-			if (driver->probe(device) < 0)
-				pr_alert(LUX_BUS_NAME ": Probe failed (dev_id: 0x%x)\n", device->dev_id);
-	};
-
-	mutex_unlock(&lux_bus_mutex);
+		if (ret < 0) {
+			dev_err(&pdev->dev, "Failed to add F1 MFD devices.\n");
+			goto cleanup;
+		}
+	} else if (device->dev_id == LUX_F1_DEV_ID) {
+		ret = devm_mfd_add_devices(&pdev->dev, PLATFORM_DEVID_AUTO,
+								   lux_f1_cells, ARRAY_SIZE(lux_f1_cells),
+								   NULL, 0, NULL);
+		if (ret < 0) {
+			dev_err(&pdev->dev, "Failed to add F1 MFD devices.\n");
+			goto cleanup;
+		}
+	} else {
+		ret = -ENODEV;
+		goto cleanup;
+	}
 
 	return 0;
 
 cleanup:
 
-	if (device != NULL) {
-		lux_device_destroy(device);
-		kfree(device);
-		device = NULL;
-	}
-
 	return ret;
 }
 
-static void lux_pci_remove([[maybe_unused]] struct pci_dev *pdev) {
-	struct lux_device *device = pci_get_drvdata(pdev);
-	if (!device)
-		return;
-
-	mutex_lock(&lux_bus_mutex);
-
-	if (device->driver)
-		device->driver->remove(device);
-
-	list_del(&device->node);
-
-	mutex_unlock(&lux_bus_mutex);
-
-	lux_device_destroy(device);
-	kfree(device);
-}
+static const struct pci_device_id lux_id_table[] = {
+	{PCI_DEVICE(VENDOR_ID, F0_DEVICE_ID)},
+	{PCI_DEVICE(VENDOR_ID, F1_DEVICE_ID)},
+	{0},
+};
+MODULE_DEVICE_TABLE(pci, lux_id_table);
 
 struct pci_driver lux_pci_driver = {
 	.name = LUX_BUS_NAME,
 	.id_table = lux_id_table,
 	.probe = lux_pci_probe,
-	.remove = lux_pci_remove,
+	// .remove = lux_pci_remove, // devm_ handles all cleanup for now
 };
-
-EXPORT_SYMBOL_GPL(lux_register_driver);
-EXPORT_SYMBOL_GPL(lux_unregister_driver);
 
 module_pci_driver(lux_pci_driver);
 

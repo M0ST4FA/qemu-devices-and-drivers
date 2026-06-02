@@ -1,4 +1,3 @@
-#include "asm/io.h"
 #include "linux/bitops.h"
 #include "linux/err.h"
 #include "linux/irq.h"
@@ -6,6 +5,7 @@
 #include "linux/irqdesc.h"
 #include "linux/irqdomain.h"
 #include "linux/pci.h"
+#include "linux/platform_device.h"
 #include "linux/printk.h"
 #include <linux/module.h>
 
@@ -16,6 +16,7 @@
 
 struct lux_irq_chip {
 	struct irq_domain *irq_domain;
+	struct lux_function *lux_function;
 	void __iomem *base;
 	int parent_irq;
 	uint num_irqs;
@@ -42,7 +43,7 @@ static void lux_irq_ack(struct irq_data *data) {
 	struct lux_irq_chip *lux_chip = irq_data_get_irq_chip_data(data);
 	void __iomem *ack_addr = lux_chip->base + REG_IRQ_ACK;
 
-	uint32_t ack_mask = 1U << data->hwirq;
+	uint32_t ack_mask = (1U << data->hwirq);
 	writel(ack_mask, ack_addr);
 };
 
@@ -113,11 +114,12 @@ static void lux_irq_chained_handler(struct irq_desc *desc) {
 // NOTE: No need to free previously allocated IRQs in this function.
 // The PCI device is enabled using pcim_ interface and it handles them automatically.
 // Freeing them later may lead to double-free issues.
-static int get_parent_irq_and_assign_handler(struct lux_device *lux_device) {
+static int get_parent_irq_and_assign_handler(struct platform_device *platdev) {
 	int ret = 0;
-	struct lux_irq_chip *lux_chip = lux_device->prv_data;
+	struct lux_irq_chip *lux_chip = platform_get_drvdata(platdev);
+	struct lux_function *lux_function = lux_chip->lux_function;
 
-	ret = pci_alloc_irq_vectors(lux_device->pdev, 1, 1,
+	ret = pci_alloc_irq_vectors(lux_function->pdev, 1, 1,
 								PCI_IRQ_MSI | PCI_IRQ_MSIX | PCI_IRQ_AFFINITY);
 	if (ret < 0) {
 		pr_err(LUX_IRQ_DRIVER_NAME ": Failed to allocate a virq in the domain of PCI MSI (err: %d)\n", ret);
@@ -125,31 +127,35 @@ static int get_parent_irq_and_assign_handler(struct lux_device *lux_device) {
 	}
 
 	// `pci_irq_vector` converts a per-device number into linux irq (aka virq)
-	lux_chip->parent_irq = pci_irq_vector(lux_device->pdev, 0);
+	lux_chip->parent_irq = pci_irq_vector(lux_function->pdev, 0);
 	irq_set_chained_handler_and_data(lux_chip->parent_irq, lux_irq_chained_handler, lux_chip);
 
 	return 0;
 }
 
-static int lux_driver_irq_probe(struct lux_device *lux_device) {
+static int lux_driver_irq_probe(struct platform_device *platdev) {
+	struct device *parent_dev = platdev->dev.parent;
+	struct lux_function *lux_function = dev_get_drvdata(parent_dev);
+
 	// 1. Create and setup state
 	int ret = 0;
 	struct irq_domain *lux_irq_domain = NULL;
-	struct lux_irq_chip *lux_chip = devm_kzalloc(&lux_device->pdev->dev,
+	struct lux_irq_chip *lux_chip = devm_kzalloc(&platdev->dev,
 												 sizeof(*lux_chip), GFP_KERNEL);
 	if (!lux_chip)
 		return -ENOMEM;
-	lux_device->prv_data = lux_chip;
+	platform_set_drvdata(platdev, lux_chip);
+	lux_chip->lux_function = lux_function;
 
 	// Guaranteed to succeed (otherwise, laoding pci-bus would've failed)
-	lux_chip->base = lux_device->bar[0];
+	lux_chip->base = lux_function->bar[0];
 	// Mask all for security; you don't want an interrupt to fire now
 	writel(0xFFFFFFFFU, lux_chip->base + REG_IRQ_MASK);
 	wmb();
 	readl(lux_chip->base + REG_IRQ_MASK);
 
 	// 2. Get a vector in parent domain and assign a chained handler
-	ret = get_parent_irq_and_assign_handler(lux_device);
+	ret = get_parent_irq_and_assign_handler(platdev);
 	if (ret < 0)
 		return ret;
 
@@ -161,6 +167,7 @@ static int lux_driver_irq_probe(struct lux_device *lux_device) {
 		return PTR_ERR(lux_irq_domain);
 	}
 	lux_chip->irq_domain = lux_irq_domain;
+	lux_function->irq_domain = lux_irq_domain;
 
 	// 4. Map hwirqs from our chip to virqs through the domain
 	if (create_hwirq_virq_mappings(lux_chip) < 0) {
@@ -176,8 +183,12 @@ static int lux_driver_irq_probe(struct lux_device *lux_device) {
 	return 0;
 }
 
-static void lux_driver_irq_remove(struct lux_device *lux_device) {
-	struct lux_irq_chip *lux_chip = lux_device->prv_data;
+static void lux_driver_irq_remove(struct platform_device *platdev) {
+	struct lux_irq_chip *lux_chip = platform_get_drvdata(platdev);
+	struct lux_function *lux_function = lux_chip->lux_function;
+
+	// Prevent interrupts registration of other interrupts using this domain
+	lux_function->irq_domain = NULL;
 
 	writel(0x0ULL, lux_chip->base + REG_IRQ_MASK);
 	wmb();
@@ -191,37 +202,22 @@ static void lux_driver_irq_remove(struct lux_device *lux_device) {
 	irq_domain_remove(lux_chip->irq_domain);
 
 	// NOTE: Do not do this. pdev is enabled using pcim_ interface
-	// pci_free_irq_vectors(lux_device->pdev);
+	// pci_free_irq_vectors(lux_function->pdev);
 
-	// Not needed because lifetime of device is attached to `lux_device`
+	// Not needed because lifetime of device is attached to `lux_function`
 	// kfree(lux_irq_chip); // Note: Will lead to double-free bug
 }
 
-static struct lux_driver lux_driver = {
-	.name = LUX_IRQ_DRIVER_NAME,
-	.supported_dev_id = LUX_F1_DEV_ID,
+static struct platform_driver lux_irq_platdev_driver = {
+	.driver = {
+		.name = LUX_IRQ_DRIVER_NAME,
+		.owner = THIS_MODULE,
+	},
 	.probe = lux_driver_irq_probe,
 	.remove = lux_driver_irq_remove,
 };
 
-static __init int lux_irq_init(void) {
-	int ret = 0;
-
-	ret = lux_register_driver(&lux_driver);
-	if (ret < 0) {
-		pr_err(LUX_IRQ_DRIVER_NAME ": Failed to register lux driver\n");
-		return ret;
-	}
-
-	return 0;
-}
-
-static __exit void lux_irq_exit(void) {
-	lux_unregister_driver(&lux_driver);
-}
-
-module_init(lux_irq_init);
-module_exit(lux_irq_exit);
+module_platform_driver(lux_irq_platdev_driver);
 
 MODULE_AUTHOR("m0st4fa");
 MODULE_DESCRIPTION("IRQ chip driver for Lux multifunction device");

@@ -21,8 +21,8 @@ struct lux_gpio_chip {
 
 static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, int value) {
 
-	struct lux_device *lux_device = gpiochip_get_data(gc);
-	void __iomem *bar0 = lux_device->bar[0];
+	struct lux_function *lux_function = gpiochip_get_data(gc);
+	void __iomem *bar0 = lux_function->bar[0];
 
 	// 1. Set direction to output
 	int64_t pin_mask = (1ULL << offset);
@@ -43,8 +43,8 @@ static int lux_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, 
 }
 
 static int lux_gpio_direction_input(struct gpio_chip *gc, unsigned int offset) {
-	struct lux_device *lux_device = gpiochip_get_data(gc);
-	void __iomem *bar0 = lux_device->bar[0];
+	struct lux_function *lux_function = gpiochip_get_data(gc);
+	void __iomem *bar0 = lux_function->bar[0];
 
 	// 1. Set direction to input
 	int64_t pin_mask = (1ULL << offset);
@@ -62,8 +62,8 @@ static int lux_gpio_direction_input(struct gpio_chip *gc, unsigned int offset) {
 }
 
 static int lux_gpio_get_direction(struct gpio_chip *gc, unsigned int offset) {
-	struct lux_device *lux_device = gpiochip_get_data(gc);
-	void __iomem *bar0 = lux_device->bar[0];
+	struct lux_function *lux_function = gpiochip_get_data(gc);
+	void __iomem *bar0 = lux_function->bar[0];
 
 	// Hardware: 1 is Output, 0 is Input.
 	// Kernel: 1 is Input, 0 is Output.
@@ -77,8 +77,8 @@ static int lux_gpio_get_direction(struct gpio_chip *gc, unsigned int offset) {
 }
 
 static int lux_gpio_set(struct gpio_chip *gc, unsigned int offset, int value) {
-	struct lux_device *lux_device = gpiochip_get_data(gc);
-	void __iomem *bar0 = lux_device->bar[0];
+	struct lux_function *lux_function = gpiochip_get_data(gc);
+	void __iomem *bar0 = lux_function->bar[0];
 
 	int64_t pin_mask = (1ULL << offset);
 	if (value == 0)
@@ -91,8 +91,8 @@ static int lux_gpio_set(struct gpio_chip *gc, unsigned int offset, int value) {
 	return 0;
 }
 static int lux_gpio_get(struct gpio_chip *gc, unsigned int offset) {
-	struct lux_device *lux_device = gpiochip_get_data(gc);
-	void __iomem *bar0 = lux_device->bar[0];
+	struct lux_function *lux_function = gpiochip_get_data(gc);
+	void __iomem *bar0 = lux_function->bar[0];
 	int value = (readq(bar0 + REG_DATA) >> offset) & 1ULL;
 
 	pr_info(LUX_CHIP_LABEL ": (get) Get pin %d = %d", offset, value);
@@ -102,8 +102,8 @@ static int lux_gpio_get(struct gpio_chip *gc, unsigned int offset) {
 
 static int lux_gpio_set_multiple(struct gpio_chip *gc,
 								 unsigned long *mask, unsigned long *bits) {
-	struct lux_device *lux_device = gpiochip_get_data(gc);
-	void __iomem *bar0 = lux_device->bar[0];
+	struct lux_function *lux_function = gpiochip_get_data(gc);
+	void __iomem *bar0 = lux_function->bar[0];
 
 	// Atomic set and clear (prevent RMW)
 	writeq(*mask & *bits, bar0 + REG_SET);
@@ -115,8 +115,8 @@ static int lux_gpio_set_multiple(struct gpio_chip *gc,
 }
 static int lux_gpio_get_multiple(struct gpio_chip *gc,
 								 unsigned long *mask, unsigned long *bits) {
-	struct lux_device *lux_device = gpiochip_get_data(gc);
-	void __iomem *bar0 = lux_device->bar[0];
+	struct lux_function *lux_function = gpiochip_get_data(gc);
+	void __iomem *bar0 = lux_function->bar[0];
 
 	int64_t data_reg = readq(bar0 + REG_DATA);
 	*bits = data_reg & *mask;
@@ -126,8 +126,10 @@ static int lux_gpio_get_multiple(struct gpio_chip *gc,
 	return 0;
 }
 
-static int lux_driver_gpio_probe(struct lux_device *device) {
+static int lux_gpio_platdev_probe(struct platform_device *platdev) {
 	int ret = 0;
+	struct device *parent_dev = platdev->dev.parent;
+	struct lux_function *lux_function = dev_get_drvdata(parent_dev);
 
 	// 1. Allocate private data struct
 	struct lux_gpio_chip *lux_gpio_chip = kzalloc(sizeof(struct lux_gpio_chip), GFP_KERNEL);
@@ -157,12 +159,12 @@ static int lux_driver_gpio_probe(struct lux_device *device) {
 	};
 
 	// 2. Register with gpiolib
-	ret = gpiochip_add_data(lux_gpio_chip->chip, device);
+	ret = gpiochip_add_data(lux_gpio_chip->chip, platdev);
 	if (ret < 0) {
 		pr_err(LUX_CHIP_LABEL ": Error while registering chip\n");
 		return ret;
 	}
-	device->prv_data = lux_gpio_chip;
+	platform_set_drvdata(platdev, lux_gpio_chip);
 
 	// 3. Register GPIO lookup table (maps pins to names) with the GPIO consumer API
 	// This lookup table is then used by the consumer API to retrive a gpio descriptor based on name
@@ -186,26 +188,26 @@ static int lux_driver_gpio_probe(struct lux_device *device) {
 
 	gpiod_add_lookup_table(lux_gpio_chip->led_lookup);
 
-	// 4. Register a platform device
+	// 4. Register a platform device for the LED
 	// This tells the kernel "Hey, new hardware just dropped!"
 	// Notice that normally, you don't create a device; the driver model core creates it for you
 	// Here we are creating a device
 	// Name is used for driver matching, id indicates instance number (-1 if the only instance)
 	lux_gpio_chip->led_platdev_resources[0] = (struct resource){
 		.name = LUX_PLATFORM_DEVICE_NAME "-smart-memory",
-		.start = pci_resource_start(device->pdev, 1),
-		.end = pci_resource_end(device->pdev, 1),
-		.flags = pci_resource_flags(device->pdev, 1),
+		.start = pci_resource_start(lux_function->pdev, 1),
+		.end = pci_resource_end(lux_function->pdev, 1),
+		.flags = pci_resource_flags(lux_function->pdev, 1),
 	};
 	lux_gpio_chip->led_platdev = platform_device_register_simple(LUX_PLATFORM_DEVICE_NAME, -1,
 																 lux_gpio_chip->led_platdev_resources, 1);
 	if (IS_ERR(lux_gpio_chip->led_platdev)) {
-		pr_err(LUX_CHIP_LABEL ": Failed to register platform device");
+		pr_err(LUX_CHIP_LABEL ": Failed to register LED platform device");
 		ret = PTR_ERR(lux_gpio_chip->led_platdev);
 		goto cleanup;
 	}
 
-	pr_info(LUX_CHIP_LABEL ": Successfully registered chip and device");
+	pr_info(LUX_CHIP_LABEL ": Successfully registered chip and LED platform device");
 	return 0;
 
 cleanup:
@@ -230,8 +232,8 @@ cleanup:
 	return ret;
 }
 
-static void lux_driver_gpio_remove(struct lux_device *device) {
-	struct lux_gpio_chip *lux_gpio_chip = device->prv_data;
+static void lux_gpio_platdev_remove(struct platform_device *platdev) {
+	struct lux_gpio_chip *lux_gpio_chip = platform_get_drvdata(platdev);
 
 	platform_device_unregister(lux_gpio_chip->led_platdev);
 	gpiod_remove_lookup_table(lux_gpio_chip->led_lookup);
@@ -240,29 +242,17 @@ static void lux_driver_gpio_remove(struct lux_device *device) {
 	kfree(lux_gpio_chip);
 }
 
-static struct lux_driver lux_gpio_chip_driver = {
-	.name = "lux-gpio-chip",
-	.supported_dev_id = LUX_F0_DEV_ID,
-	.probe = lux_driver_gpio_probe,
-	.remove = lux_driver_gpio_remove,
+static struct platform_driver lux_gpio_platdev_driver = {
+	.driver = {
+		.name = LUX_CHIP_LABEL,
+		.owner = THIS_MODULE,
+	},
+	.probe = lux_gpio_platdev_probe,
+	.remove = lux_gpio_platdev_remove,
 };
 
-static int __init lux_gpio_init(void) {
-	int ret = 0;
+module_platform_driver(lux_gpio_platdev_driver);
 
-	ret = lux_register_driver(&lux_gpio_chip_driver);
-	if (ret < 0)
-		pr_err(LUX_CHIP_LABEL ": Failed to register lux driver for GPIO chip with lux core\n");
-
-	return ret;
-}
-
-static void __exit lux_gpio_exit(void) {
-	lux_unregister_driver(&lux_gpio_chip_driver);
-}
-
-module_init(lux_gpio_init);
-module_exit(lux_gpio_exit);
 MODULE_AUTHOR("m0st4fa");
 MODULE_DESCRIPTION("GPIO frontend for Lux device");
 MODULE_LICENSE("GPL");

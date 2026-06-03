@@ -22,6 +22,9 @@
 #define LUX_F0_DEV_ID 0x4444
 #define LUX_F1_DEV_ID 0x5555
 
+#define LUX_TIMER_CS_RATING 300 // good enought to be selected some times
+#define LUX_TIMER_CS_RATE 1000
+
 struct lux_driver;
 struct lux_function;
 

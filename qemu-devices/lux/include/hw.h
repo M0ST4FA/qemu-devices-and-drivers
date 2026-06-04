@@ -89,3 +89,7 @@ enum hwirqs {
 static const char *hwirq_names[] = {
 	[HWIRQ_TIMER] = "TIMER_IRQ",
 };
+
+#define TIMER_BIT (1ULL << 0)
+#define IRQ_BIT (1ULL << 1)
+#define RELOAD_BIT (1ULL << 2)

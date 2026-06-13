@@ -223,6 +223,11 @@ int device_init(struct lux_silicon *restrict device, const char *f0_sock_path, c
 	if (ret < 0)
 		goto cleanup;
 
+	// 10. Setup timer
+	ret = device_timer_init(device);
+	if (ret < 0)
+		goto cleanup;
+
 	return 0;
 
 cleanup:
@@ -334,7 +339,7 @@ inline int device_run_eventloop(struct lux_silicon *device) {
 	};
 
 	while (1) {
-		timeout = TIMER_ENABLED(device) ? 10 : -1;
+		timeout = TIMER_ENABLED(device) ? 1 : -1;
 		ret = poll(fds, sizeof(fds) / sizeof(fds[0]), timeout);
 		if (ret < 0 && errno != EINTR) {
 			pr_log_libcerror(errno, "poll");

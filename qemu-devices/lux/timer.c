@@ -10,12 +10,12 @@ int device_timer_tick(struct lux_silicon *restrict device) {
 		return 0;
 
 	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	uint64_t now_ms = (ts.tv_sec * 1000) + (ts.tv_nsec / (1000 * 1000));
-	uint64_t elapsed = now_ms - device->last_tick_ms;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+	uint64_t now_ns = (ts.tv_sec * LUX_TIMER_RATE) + (ts.tv_nsec);
+	uint64_t elapsed = now_ns - device->last_tick_ns;
 
 	// This tick is the past tick next tick
-	device->last_tick_ms = now_ms;
+	device->last_tick_ns = now_ns;
 
 	device->timer_val += elapsed;
 
@@ -25,7 +25,7 @@ int device_timer_tick(struct lux_silicon *restrict device) {
 
 		// Handle autoreloading
 		if (TIMER_RELOAD_ENABLED(device))
-			device->timer_val = 0;
+			device->timer_cmp += device->last_delta_ns;
 		else
 			device->timer_ctrl &= ~IRQ_BIT;
 	}

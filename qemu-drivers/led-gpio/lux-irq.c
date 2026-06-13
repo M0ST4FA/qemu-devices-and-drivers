@@ -91,6 +91,8 @@ static void lux_irq_chained_handler(struct irq_desc *desc) {
 	struct lux_irq_chip *lux_chip = irq_desc_get_handler_data(desc);
 	struct irq_chip *parent_chip = irq_desc_get_chip(desc); // PCI MSI chip
 
+	pr_info(LUX_IRQ_DRIVER_NAME ": domain ptr %p\n", lux_chip->irq_domain);
+
 	// The parent will now mask the hwirq referenced by desc
 	chained_irq_enter(parent_chip, desc);
 

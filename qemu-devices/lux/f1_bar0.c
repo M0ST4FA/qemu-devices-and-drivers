@@ -92,7 +92,7 @@ static inline ssize_t f1_bar0_write(struct lux_silicon *device,
 			if (count != 8)
 				return -1;
 			device->timer_cmp = *(uint64_t *)buf;
-
+			device->last_delta_ns = device->timer_cmp - device->timer_val;
 			break;
 
 		default:

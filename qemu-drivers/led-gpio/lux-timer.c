@@ -1,7 +1,6 @@
 #include "asm/io.h"
 #include "linux/container_of.h"
 #include "linux/cpumask.h"
-#include "linux/cpumask_types.h"
 #include "linux/dev_printk.h"
 #include "linux/device.h"
 #include "linux/device/devres.h"
@@ -50,7 +49,7 @@ static int lux_ce_set_state_oneshot(struct clock_event_device *ce) {
 	void __iomem *base = lux_clock->base;
 
 	u32 ctrl = readl(base + REG_TIMER_CTRL);
-	ctrl |= (TIMER_BIT | IRQ_BIT);
+	ctrl |= TIMER_BIT;
 	writel(ctrl, base + REG_TIMER_CTRL);
 	wmb();
 
@@ -62,7 +61,7 @@ static int lux_ce_set_state_oneshot_stopped(struct clock_event_device *ce) {
 	void __iomem *base = lux_clock->base;
 
 	u32 ctrl = readl(base + REG_TIMER_CTRL);
-	ctrl &= ~(TIMER_BIT | IRQ_BIT);
+	ctrl &= ~IRQ_BIT;
 	writel(ctrl, base + REG_TIMER_CTRL);
 	wmb();
 
@@ -95,15 +94,13 @@ static int lux_ce_set_state_shutdown(struct clock_event_device *ce) {
 
 static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 	struct lux_clock *lux_clock = dev_id;
-	void __iomem *base = lux_clock->base;
 
 	pr_alert(LUX_TIMER_DRIVER_NAME ": TIMER FIRRRRRRRRRRRRRRRRRED!\n");
 
 	// 1. Ack the hardware
-	u32 irq_status = readl(base + REG_IRQ_STATUS);
-	irq_status |= (1 << HWIRQ_TIMER);
-	writel(irq_status, base + REG_IRQ_ACK);
-	wmb();
+	// writel((1 << HWIRQ_TIMER), base + REG_IRQ_ACK);
+	// wmb();
+	// NOTE: No need, genirq already calls lux_irq_ack in its flow handler
 
 	// 2. Wakeup the Linux schedular
 	lux_clock->ce.event_handler(&lux_clock->ce);
@@ -188,6 +185,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 	lux_clock->base = lux_function->bar[0];
 
 	// 2. Request the virq (i.e. register a handler for it)
+	pr_info(LUX_IRQ_DRIVER_NAME ": domain ptr %p, virq: %d\n", lux_function->irq_domain, virq);
 	ret = devm_request_irq(dev, virq, lux_ce_timer_isr,
 						   IRQF_TIMER | IRQF_IRQPOLL, LUX_TIMER_DRIVER_NAME,
 						   lux_clock);
@@ -200,16 +198,16 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 	struct clocksource *cs = &lux_clock->cs;
 	cs->name = LUX_TIMER_DRIVER_NAME "-cs";
 	cs->rating = LUX_TIMER_CS_RATING;
-	cs->flags = CLOCK_SOURCE_IS_CONTINUOUS | CLOCK_SOURCE_SUSPEND_NONSTOP | CLOCK_SOURCE_HAS_COUPLED_CLOCK_EVENT;
+	cs->flags = CLOCK_SOURCE_IS_CONTINUOUS | CLOCK_SOURCE_SUSPEND_NONSTOP;
 	cs->mask = CLOCKSOURCE_MASK(64);
 	cs->read = lux_clocksource_read;
 	cs->enable = lux_clocksource_enable;
 	cs->disable = lux_clocksource_disable;
 
 	cs->shift = 24;
-	cs->mult = clocksource_hz2mult(LUX_TIMER_CS_RATE, cs->shift);
+	cs->mult = clocksource_hz2mult(LUX_TIMER_RATE, cs->shift);
 
-	ret = clocksource_register_hz(cs, LUX_TIMER_CS_RATE);
+	ret = clocksource_register_hz(cs, LUX_TIMER_RATE);
 	if (ret < 0) {
 		dev_err(dev, LUX_TIMER_DRIVER_NAME ": Failed to register clocksource (err: %d)\n", ret);
 		return -1;
@@ -223,7 +221,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 	struct clock_event_device *ce = &lux_clock->ce;
 	ce->name = LUX_TIMER_DRIVER_NAME "-ce";
 	ce->rating = 600;
-	ce->features = CLOCK_EVT_FEAT_ONESHOT;
+	ce->features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_PERIODIC;
 	ce->set_state_oneshot = lux_ce_set_state_oneshot;
 	ce->set_state_oneshot_stopped = lux_ce_set_state_oneshot_stopped;
 	ce->set_next_event = lux_ce_set_next_event;
@@ -233,7 +231,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 	ce->irq = virq;
 	lux_clock->ce_cpu = 0;
 
-	clockevents_config_and_register(ce, LUX_TIMER_CS_RATE, 1, 0xFFFFFFFF);
+	clockevents_config_and_register(ce, LUX_TIMER_RATE, 100000, 0xFFFFFFFF);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");
 

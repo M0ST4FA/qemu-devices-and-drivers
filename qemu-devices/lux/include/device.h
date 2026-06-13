@@ -1,10 +1,13 @@
 #pragma once
 
 #include "libvfio-user.h"
+#include <errno.h>
 #include <stdint.h>
 #include <sys/poll.h>
+#include <time.h>
 
 #include "hw.h"
+#include "logger.h"
 
 struct lux_silicon {
 	// F0 (PCIe function 0) state
@@ -39,8 +42,9 @@ struct lux_silicon {
 			uint64_t timer_val;
 			uint64_t timer_cmp;
 
-			uint64_t last_tick_ms; /* Host process time at previous tick.
+			uint64_t last_tick_ns; /* Host process time at previous tick.
 									  The difference between it and host time at current tick is elapsed time. */
+			uint64_t last_delta_ns;
 		};
 	};
 
@@ -70,5 +74,18 @@ int device_get_led_color(struct lux_silicon *restrict device,
 #define TIMER_RELOAD_ENABLED(device) (device->timer_ctrl & RELOAD_BIT)
 #define TIMER_TRIGGER_VAL_REACHED(device) (device->timer_val >= device->timer_cmp)
 
+static inline int device_timer_init(struct lux_silicon *restrict device) {
+	int ret = 0;
+
+	struct timespec ts;
+	ret = clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+	if (ret < 0) {
+		pr_log_libcerror(errno, "clock_gettime");
+		return ret;
+	}
+	device->last_tick_ns = (ts.tv_sec * LUX_TIMER_RATE) + (ts.tv_nsec);
+
+	return 0;
+}
 int device_timer_tick(struct lux_silicon *restrict device);
 int device_irq_tick(struct lux_silicon *restrict device);

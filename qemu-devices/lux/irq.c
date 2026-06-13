@@ -11,9 +11,11 @@ int device_irq_tick(struct lux_silicon *restrict device) {
 
 	// Edge triggered behavior: Fire and forget
 	// We clear pending only on ack
-	if (pending)
+	if (pending) {
 		if (vfu_irq_trigger(device->f1_ctx, 0) < 0)
 			pr_log_libcerror(errno, "vfu_irq_trigger");
+		pr_log("debug", "Fired IRQ!");
+	}
 
 	return 0;
 }

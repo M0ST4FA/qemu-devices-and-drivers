@@ -57,5 +57,5 @@ The Silicon die is split into two physical PCI Functions:
 | `0x04` | `REG_IRQ_MASK`   | RW     | IRQ Disable Mask.                                                                |
 | `0x08` | `REG_IRQ_ACK`    | WO     | IRQ Acknowledge. Write `1` to Bit 0 to clear pending Timer IRQ. 4 Bytes.         |
 | `0x0C` | `REG_TIMER_CTRL` | RW     | Timer Control: Bit 0=Enable Clock, Bit 1=IRQ Enable, Bit 2=Auto-Reload. 4 Bytes. |
-| `0x10` | `REG_TIMER_TIME` | RO     | Free-running Clock. 64-bit timestamp (ms). 8 Bytes.                              |
+| `0x10` | `REG_TIMER_TIME` | RO     | Free-running Clock. 64-bit timestamp (ns). 8 Bytes.                              |
 | `0x18` | `REG_TIMER_CMP`  | RW     | Timer Alarm. Triggers IRQ when `TIME >= CMP`. 8 Bytes.                           |

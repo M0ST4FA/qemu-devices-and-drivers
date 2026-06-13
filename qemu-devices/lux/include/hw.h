@@ -93,3 +93,4 @@ static const char *hwirq_names[] = {
 #define TIMER_BIT (1ULL << 0)
 #define IRQ_BIT (1ULL << 1)
 #define RELOAD_BIT (1ULL << 2)
+#define LUX_TIMER_RATE (1000ULL * 1000ULL * 1000ULL)

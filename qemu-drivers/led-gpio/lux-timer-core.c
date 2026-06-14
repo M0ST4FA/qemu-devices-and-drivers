@@ -1,12 +1,20 @@
+#include "asm-generic/int-ll64.h"
+#include "asm-generic/ioctl.h"
 #include "asm/io.h"
+#include "asm/uaccess.h"
+#include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/cpumask.h"
 #include "linux/dev_printk.h"
 #include "linux/device.h"
 #include "linux/device/devres.h"
+#include "linux/errno.h"
+#include "linux/fs.h"
 #include "linux/hrtimer.h"
+#include "linux/init.h"
 #include "linux/interrupt.h"
 #include "linux/irqdomain.h"
+#include "linux/miscdevice.h"
 #include "linux/platform_device.h"
 #include "linux/printk.h"
 #include <linux/clockchips.h>
@@ -19,11 +27,20 @@
 
 u64 lux_clocksource_current;
 
-struct lux_clock {
-	struct clocksource cs;
-	struct clock_event_device ce;
-	void __iomem *base;
-	int ce_cpu;
+// ------------- CDEV INTERFACE ---------
+int lux_timer_open(struct inode *inode, struct file *filp);
+int lux_timer_release(struct inode *inode, struct file *filp);
+ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *offset);
+ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
+ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
+
+static struct file_operations misc_fops = {
+	.owner = THIS_MODULE,
+	.open = lux_timer_open,
+	.release = lux_timer_release,
+	.read = lux_timer_read,
+	.write = lux_timer_write,
+	.unlocked_ioctl = lux_timer_ioctl,
 };
 
 // ------------- CLOCKEVENT -------------
@@ -220,7 +237,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 	// 5. Register clockevent
 	struct clock_event_device *ce = &lux_clock->ce;
 	ce->name = LUX_TIMER_DRIVER_NAME "-ce";
-	ce->rating = 600;
+	ce->rating = 100;
 	ce->features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_PERIODIC;
 	ce->set_state_oneshot = lux_ce_set_state_oneshot;
 	ce->set_state_oneshot_stopped = lux_ce_set_state_oneshot_stopped;
@@ -233,6 +250,18 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 
 	clockevents_config_and_register(ce, LUX_TIMER_RATE, 100000, 0xFFFFFFFF);
 
+	// 6. Register miscdevice
+	lux_clock->misc.minor = MISC_DYNAMIC_MINOR;
+	lux_clock->misc.name = LUX_TIMER_DRIVER_NAME;
+	lux_clock->misc.mode = 0666;
+	lux_clock->misc.fops = &misc_fops;
+
+	ret = misc_register(&lux_clock->misc);
+	if (ret < 0) {
+		pr_err(LUX_TIMER_DRIVER_NAME ": Failed to register miscdevice for cdev interface.\n");
+		return ret;
+	}
+
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");
 
 	return 0;
@@ -242,6 +271,8 @@ static void lux_driver_timer_remove(struct platform_device *platdev) {
 	int ret = 0;
 	struct device *dev = &platdev->dev;
 	struct lux_clock *lux_clock = platform_get_drvdata(platdev);
+
+	misc_deregister(&lux_clock->misc);
 
 	ret = clocksource_unregister(&lux_clock->cs);
 	if (ret < 0) {

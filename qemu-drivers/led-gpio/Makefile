@@ -8,5 +8,4 @@ obj-m += lux-irq.o
 obj-m += lux-timer.o
 
 ccflags-y := -I ${src}/include
-#lux-core-y := lux-core.o
-#lux-gpio-manual-y := lux-gpio-manual.o
+lux-timer-y := lux-timer-core.o lux-timer-fops.o

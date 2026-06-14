@@ -1,6 +1,10 @@
 #pragma once
 
+#include "linux/clocksource.h"
+#include "linux/hrtimer.h"
+#include "linux/miscdevice.h"
 #include <linux/cdev.h>
+#include <linux/clockchips.h>
 #include <linux/pci.h>
 #include <linux/types.h>
 
@@ -38,4 +42,13 @@ struct lux_function {
 	void __iomem *bar[6];
 
 	struct list_head node; // Allows the bus to keep a list of devices
+};
+
+struct lux_clock {
+	struct clocksource cs;
+	struct clock_event_device ce;
+	struct miscdevice misc;
+	void __iomem *base;
+	int ce_cpu;
+	wait_queue_head_t wait_queue;
 };

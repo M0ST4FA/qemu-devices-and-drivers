@@ -110,19 +110,11 @@ static int lux_ce_set_state_shutdown(struct clock_event_device *ce) {
 	return 0;
 }
 
-static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
-	struct lux_clock *lux_clock = dev_id;
+static void lux_timer_tasklet_func(struct tasklet_struct *t) {
+	struct lux_clock *lux_clock = container_of(t, struct lux_clock, timer_tasklet);
+	pr_alert(LUX_TIMER_DRIVER_NAME ": [PID %d] TASKLET FIRRRRRRRRRRRRRRRRRED!\n", current->pid);
 
-	pr_alert(LUX_TIMER_DRIVER_NAME ": TIMER FIRRRRRRRRRRRRRRRRRED!\n");
-
-	// 1. Ack the hardware
-	// writel((1 << HWIRQ_TIMER), base + REG_IRQ_ACK);
-	// wmb();
-	// NOTE: No need, genirq already calls lux_irq_ack in its flow handler
-
-	// 2. Wakeup waiting proccesses (from cdev interface)
-
-	raw_spin_lock(&lux_clock->irq_data_lock);
+	raw_spin_lock(&lux_clock->irq_lock);
 	lux_clock->irq_data += (1 << 8);
 
 	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
@@ -131,7 +123,9 @@ static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 	else
 		lux_clock->irq_data |= LUX_CLOCK_ALARM;
 
-	raw_spin_unlock(&lux_clock->irq_data_lock);
+	lux_clock->global_overruns++;
+
+	raw_spin_unlock(&lux_clock->irq_lock);
 
 	if (!lux_clock->async)
 		wake_up_interruptible_sync(&lux_clock->wait_queue);
@@ -150,6 +144,20 @@ static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 				pr_alert(LUX_TIMER_DRIVER_NAME ": Unable to send signal...\n");
 		}
 	}
+}
+
+static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
+	struct lux_clock *lux_clock = dev_id;
+
+	pr_alert(LUX_TIMER_DRIVER_NAME ": TIMER FIRRRRRRRRRRRRRRRRRED!\n");
+
+	// 1. Ack the hardware
+	// writel((1 << HWIRQ_TIMER), base + REG_IRQ_ACK);
+	// wmb();
+	// NOTE: No need, genirq already calls lux_irq_ack in its flow handler
+
+	// 2. Handle cdev interface
+	tasklet_schedule(&lux_clock->timer_tasklet);
 
 	// 3. Wakeup the Linux schedular
 	if (lux_clock->ce.event_handler)
@@ -244,6 +252,9 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		return ret;
 	}
 
+	// Register tasklet
+	tasklet_setup(&lux_clock->timer_tasklet, lux_timer_tasklet_func);
+
 	// 3. Register the clocksource
 	struct clocksource *cs = &lux_clock->cs;
 	cs->name = LUX_TIMER_DRIVER_NAME "-cs";
@@ -295,7 +306,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		return ret;
 	}
 	init_waitqueue_head(&lux_clock->wait_queue);
-	raw_spin_lock_init(&lux_clock->irq_data_lock);
+	raw_spin_lock_init(&lux_clock->irq_lock);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");
 
@@ -306,6 +317,8 @@ static void lux_driver_timer_remove(struct platform_device *platdev) {
 	int ret = 0;
 	struct device *dev = &platdev->dev;
 	struct lux_clock *lux_clock = platform_get_drvdata(platdev);
+
+	tasklet_kill(&lux_clock->timer_tasklet);
 
 	misc_deregister(&lux_clock->misc);
 

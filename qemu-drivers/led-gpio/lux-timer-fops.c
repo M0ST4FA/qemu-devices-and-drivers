@@ -26,9 +26,6 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
 int lux_timer_open(struct inode *inode, struct file *filp) {
 	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
 
-	if (test_and_set_bit(0, &lux_clock->is_open) == 1)
-		return -EBUSY;
-
 	pr_info(LUX_TIMER_DRIVER_NAME ": Opened character interface.\n");
 
 	return 0;
@@ -65,7 +62,6 @@ int lux_timer_release(struct inode *inode, struct file *filp) {
 	lux_timer_disable_bits(lux_clock, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Closed character interface.\n");
-	clear_bit(0, &lux_clock->is_open);
 
 	return 0;
 }
@@ -73,6 +69,7 @@ int lux_timer_release(struct inode *inode, struct file *filp) {
 ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *offset) {
 	int ret = 0;
 	__u64 irq_data;
+	__u64 overruns;
 
 	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
 
@@ -80,18 +77,22 @@ ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *
 		return -ENOSPC;
 
 	if (!lux_clock->async) { // Block only in synchronous mode
+		overruns = lux_clock->global_overruns;
 		ret = wait_event_interruptible(lux_clock->wait_queue, lux_clock->irq_data != 0);
 		if (ret < 0)
 			goto out;
 	}
 
-	raw_spin_lock_irq(&lux_clock->irq_data_lock);
+	raw_spin_lock_irq(&lux_clock->irq_lock);
 
 	irq_data = lux_clock->irq_data;
 
-	lux_clock->irq_data = 0;
+	if (!lux_clock->async) {
+		overruns = lux_clock->global_overruns - overruns;
+		irq_data = (overruns << 8) | (irq_data & 0xFF);
+	}
 
-	raw_spin_unlock_irq(&lux_clock->irq_data_lock);
+	raw_spin_unlock_irq(&lux_clock->irq_lock);
 
 	ret = put_user(irq_data, (__u64 __user *)buf);
 	if (ret < 0)
@@ -218,6 +219,10 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			if (!capable(CAP_SYS_TIME))
 				return -EACCES;
 
+			// Only one task can be in async mode for now
+			if (lux_clock->async_task)
+				return -EBUSY;
+
 			if (get_user(lux_clock->signo, (__u32 __user *)arg) < 0)
 				return -EFAULT;
 
@@ -231,7 +236,6 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			break;
 
 		default:
-
 			return -ENOTTY;
 	}
 

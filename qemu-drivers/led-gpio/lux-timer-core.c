@@ -1,14 +1,10 @@
 #include "asm-generic/int-ll64.h"
-#include "asm-generic/ioctl.h"
-#include "asm/io.h"
-#include "asm/uaccess.h"
 #include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/cpumask.h"
 #include "linux/dev_printk.h"
 #include "linux/device.h"
 #include "linux/device/devres.h"
-#include "linux/errno.h"
 #include "linux/fs.h"
 #include "linux/hrtimer.h"
 #include "linux/init.h"
@@ -23,7 +19,10 @@
 #include <linux/sched_clock.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
+#include "linux/spinlock.h"
+#include "linux/wait.h"
 #include "lux.h"
+#include "lux_ioctl.h"
 
 u64 lux_clocksource_current;
 
@@ -119,8 +118,23 @@ static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 	// wmb();
 	// NOTE: No need, genirq already calls lux_irq_ack in its flow handler
 
-	// 2. Wakeup the Linux schedular
-	lux_clock->ce.event_handler(&lux_clock->ce);
+	// 2. Wakeup waiting proccesses (from cdev interface)
+
+	raw_spin_lock(&lux_clock->irq_data_lock);
+	lux_clock->irq_data += (1 << 8);
+
+	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
+	if (ctrl & RELOAD_BIT)
+		lux_clock->irq_data |= LUX_CLOCK_PERIODIC;
+	else
+		lux_clock->irq_data |= LUX_CLOCK_ALARM;
+
+	raw_spin_unlock(&lux_clock->irq_data_lock);
+	wake_up_interruptible_sync(&lux_clock->wait_queue);
+
+	// 3. Wakeup the Linux schedular
+	if (lux_clock->ce.event_handler)
+		lux_clock->ce.event_handler(&lux_clock->ce);
 
 	return IRQ_HANDLED;
 }
@@ -261,6 +275,8 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		pr_err(LUX_TIMER_DRIVER_NAME ": Failed to register miscdevice for cdev interface.\n");
 		return ret;
 	}
+	init_waitqueue_head(&lux_clock->wait_queue);
+	raw_spin_lock_init(&lux_clock->irq_data_lock);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");
 

@@ -13,6 +13,8 @@
 #include <linux/types.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
+#include "linux/spinlock.h"
+#include "linux/wait.h"
 #include "lux.h"
 #include "lux_ioctl.h"
 
@@ -25,6 +27,9 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
 int lux_timer_open(struct inode *inode, struct file *filp) {
 	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
 
+	if (test_and_set_bit(0, &lux_clock->is_open) == 1)
+		return -EBUSY;
+
 	pr_info(LUX_TIMER_DRIVER_NAME ": Opened character interface.\n");
 
 	return 0;
@@ -34,14 +39,46 @@ int lux_timer_release(struct inode *inode, struct file *filp) {
 	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Closed character interface.\n");
+	clear_bit(0, &lux_clock->is_open);
 
 	return 0;
 }
 
 ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *offset) {
+	int ret = 0;
+	__u64 irq_data;
+
 	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
 
-	return 0;
+	if (len < sizeof(lux_clock->irq_data))
+		return -ENOSPC;
+
+	ret = wait_event_interruptible(lux_clock->wait_queue, lux_clock->irq_data != 0);
+	if (ret < 0)
+		goto out;
+
+	raw_spin_lock_irq(&lux_clock->irq_data_lock);
+
+	irq_data = lux_clock->irq_data;
+
+	lux_clock->irq_data = 0;
+
+	raw_spin_unlock_irq(&lux_clock->irq_data_lock);
+
+	ret = put_user(irq_data, (__u64 __user *)buf);
+	if (ret < 0)
+		goto out;
+
+	*offset = 0; // Make sure offset is always 0; we ignore it anyways
+
+out:
+	if (ret == -ERESTART)
+		pr_alert(LUX_TIMER_DRIVER_NAME ": [%d] Woke up due to signal...\n", current->pid);
+
+	if (raw_spin_is_locked(&lux_clock->irq_data_lock))
+		raw_spin_unlock_irq(&lux_clock->irq_data_lock);
+
+	return ret;
 }
 
 ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset) {

@@ -23,6 +23,12 @@ struct [[gnu::packed]] lux_hw_info {
 #define LUX_TIME_RD _IOR(LUX_IOCTL_MAGIC, 4, __u64)
 #define LUX_TIME_SET _IOW(LUX_IOCTL_MAGIC, 5, __u64)
 
+#define LUX_CLOCK_OVERRUN(data) ((__u64)data >> 8)
+#define LUX_CLOCK_IRQ_CAUSE(data) ((__u64)data & 0xFF)
+// IRQ causes
+#define LUX_CLOCK_PERIODIC (1 << 0)
+#define LUX_CLOCK_ALARM (1 << 1)
+
 // 2. Alarm operations
 #define LUX_ALM_SET _IOW(LUX_IOCTL_MAGIC, 6, __u64) // Set reg TIME_CMP
 #define LUX_ALM_RD _IOR(LUX_IOCTL_MAGIC, 7, __u64)	// Read reg TIME_CMP
@@ -35,6 +41,10 @@ struct [[gnu::packed]] lux_hw_info {
 #define LUX_IRQP_SET _IOW(LUX_IOCTL_MAGIC, 10, __u64) // Write delta to REG_CMP and enable RELOAD_BIT
 #define LUX_PIE_ON _IO(LUX_IOCTL_MAGIC, 12)			  // Set TIMER_BIT | IRQ_BIT | RELOAD_BIT
 #define LUX_PIE_OFF _IO(LUX_IOCTL_MAGIC, 13)		  // Clear TIMER_BIT | IRQ_BIT | RELOAD_BIT
+
+// 4. Enable asynchronous mode (read will return immediately)
+#define LUX_ALM_ASYNC_ON _IO(LUX_IOCTL_MAGIC, 14)
+#define LUX_ALM_ASYNC_OFF _IO(LUX_IOCTL_MAGIC, 15)
 
 [[maybe_unused]]
 static const char *ioctl_names[] = {
@@ -54,4 +64,7 @@ static const char *ioctl_names[] = {
 	[_IOC_NR(LUX_IRQP_SET)] = "IRQP_SET",
 	[_IOC_NR(LUX_PIE_ON)] = "PIE_ON",
 	[_IOC_NR(LUX_PIE_OFF)] = "PIE_OFF",
+
+	[_IOC_NR(LUX_ALM_ASYNC_ON)] = "ALM_ASYNC_ON",
+	[_IOC_NR(LUX_ALM_ASYNC_OFF)] = "ALM_ASYNC_OFF",
 };

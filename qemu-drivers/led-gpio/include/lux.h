@@ -3,6 +3,7 @@
 #include "linux/clocksource.h"
 #include "linux/hrtimer.h"
 #include "linux/miscdevice.h"
+#include "linux/spinlock_types.h"
 #include <linux/cdev.h>
 #include <linux/clockchips.h>
 #include <linux/pci.h>
@@ -50,5 +51,9 @@ struct lux_clock {
 	struct miscdevice misc;
 	void __iomem *base;
 	int ce_cpu;
+	unsigned long is_open;
+
+	raw_spinlock_t irq_data_lock;
+	__u64 irq_data;
 	wait_queue_head_t wait_queue;
 };

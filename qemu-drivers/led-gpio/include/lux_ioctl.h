@@ -43,7 +43,7 @@ struct [[gnu::packed]] lux_hw_info {
 #define LUX_PIE_OFF _IO(LUX_IOCTL_MAGIC, 13)		  // Clear TIMER_BIT | IRQ_BIT | RELOAD_BIT
 
 // 4. Enable asynchronous mode (read will return immediately)
-#define LUX_ALM_ASYNC_ON _IO(LUX_IOCTL_MAGIC, 14)
+#define LUX_ALM_ASYNC_ON _IOW(LUX_IOCTL_MAGIC, 14, __u32)
 #define LUX_ALM_ASYNC_OFF _IO(LUX_IOCTL_MAGIC, 15)
 
 [[maybe_unused]]

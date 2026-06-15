@@ -1,4 +1,5 @@
 #include "asm-generic/int-ll64.h"
+#include "asm-generic/siginfo.h"
 #include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/cpumask.h"
@@ -19,6 +20,7 @@
 #include <linux/sched_clock.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
+#include "linux/sched/signal.h"
 #include "linux/spinlock.h"
 #include "linux/wait.h"
 #include "lux.h"
@@ -130,7 +132,24 @@ static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 		lux_clock->irq_data |= LUX_CLOCK_ALARM;
 
 	raw_spin_unlock(&lux_clock->irq_data_lock);
-	wake_up_interruptible_sync(&lux_clock->wait_queue);
+
+	if (!lux_clock->async)
+		wake_up_interruptible_sync(&lux_clock->wait_queue);
+	else {
+		kernel_siginfo_t info = {0};
+
+		info.si_signo = lux_clock->signo;
+		info.si_code = SI_TIMER;
+		info.si_int = 1;
+
+		if (lux_clock->async_task != NULL) {
+			pr_alert(LUX_TIMER_DRIVER_NAME ": Sending signal to task [%d]...\n",
+					 lux_clock->async_task->pid);
+
+			if (send_sig_info(lux_clock->signo, &info, lux_clock->async_task) < 0)
+				pr_alert(LUX_TIMER_DRIVER_NAME ": Unable to send signal...\n");
+		}
+	}
 
 	// 3. Wakeup the Linux schedular
 	if (lux_clock->ce.event_handler)

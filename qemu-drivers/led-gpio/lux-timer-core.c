@@ -36,6 +36,9 @@ ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *
 ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
 ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
 
+u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub);
+void lux_reprogram_timer(struct lux_clock *lux_clock);
+
 static struct file_operations misc_fops = {
 	.owner = THIS_MODULE,
 	.open = lux_timer_open,
@@ -116,16 +119,28 @@ static void lux_timer_tasklet_func(struct tasklet_struct *t) {
 	struct lux_clock_subscriber *sub = NULL;
 	pr_alert(LUX_TIMER_DRIVER_NAME ": [PID %d] TASKLET FIRRRRRRRRRRRRRRRRRED!\n", current->pid);
 
-	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
-
 	list_for_each_entry(sub, &lux_clock->subscribers, node) {
+
 		raw_spin_lock(&sub->irq_lock);
+		if (sub->deadline == 0) { // Timer not active
+			raw_spin_unlock(&sub->irq_lock);
+			continue;
+		}
+		u64 virt_time = lux_timer_read_virtual_time(sub);
+		if (sub->deadline > virt_time) { // Deadline not met yet
+			raw_spin_unlock(&sub->irq_lock);
+			continue;
+		}
+
 		sub->irq_data += (1 << 8);
 
-		if (ctrl & RELOAD_BIT)
+		if (sub->periodic) {
 			sub->irq_data |= LUX_CLOCK_PERIODIC;
-		else
+			sub->deadline += sub->periodic_delta;
+		} else {
 			sub->irq_data |= LUX_CLOCK_ALARM;
+			sub->deadline = 0;
+		}
 
 		raw_spin_unlock(&sub->irq_lock);
 
@@ -150,6 +165,9 @@ static void lux_timer_tasklet_func(struct tasklet_struct *t) {
 
 	// Notify all synchronous waiters
 	wake_up_interruptible_sync(&lux_clock->wait_queue);
+
+	// Reprogram timer
+	lux_reprogram_timer(lux_clock);
 }
 
 static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {

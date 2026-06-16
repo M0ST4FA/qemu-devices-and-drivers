@@ -78,8 +78,8 @@ static int timer_test_alarm(int fd, int pid, __u64 alarm) {
 	// sleep(2); // Accumulate overruns
 	if (read(fd, &overruns, sizeof(overruns)) < 0)
 		err(EXIT_FAILURE, "[%d] read", pid);
-	printf("[%d] Alarm fired! Overruns: %llu, cause: %llu\n",
-		   pid, LUX_CLOCK_OVERRUN(overruns), LUX_CLOCK_IRQ_CAUSE(overruns));
+	printf("[%d] Alarm fired! Overruns: %llu, cause: %s\n",
+		   pid, LUX_CLOCK_OVERRUN(overruns), LUX_CLOCK_IRQ_CAUSE(overruns) == LUX_CLOCK_PERIODIC ? "PERIODIC" : "ALARM");
 
 	// 5. Calculate drift
 	if (ioctl(fd, LUX_TIME_RD, &now) < 0)

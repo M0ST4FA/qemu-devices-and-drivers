@@ -50,8 +50,12 @@ struct lux_clock_subscriber {
 	struct lux_clock *lux_clock;
 	int64_t time_offset;
 
+	// Protects the next three fields
 	raw_spinlock_t irq_lock;
 	u64 irq_data;
+	// Deadline in subscriber virtual timespace
+	u64 periodic_delta;
+	u64 deadline;
 
 	bool enabled;
 	bool periodic;

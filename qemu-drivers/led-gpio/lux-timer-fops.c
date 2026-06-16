@@ -25,21 +25,10 @@ ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *
 ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
 ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
 
-int lux_timer_open(struct inode *inode, struct file *filp) {
-	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
+u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub);
+void lux_reprogram_timer(struct lux_clock *lux_clock);
 
-	struct lux_clock_subscriber *sub = kzalloc(sizeof(*sub), GFP_KERNEL);
-	sub->lux_clock = lux_clock;
-
-	filp->private_data = sub;
-
-	list_add(&sub->node, &lux_clock->subscribers);
-
-	pr_info(LUX_TIMER_DRIVER_NAME ": Opened character interface.\n");
-
-	return 0;
-}
-
+// HELPER FUNCTIONS ------------
 static inline void lux_timer_enable_bits(struct lux_clock_subscriber *sub, int bits) {
 	struct lux_clock *lux_clock = sub->lux_clock;
 
@@ -59,6 +48,9 @@ static inline void lux_timer_enable_bits(struct lux_clock_subscriber *sub, int b
 			atomic_inc(&lux_clock->periodic_users);
 			sub->periodic = true;
 		}
+
+	// Remove it since because of virtualization, we must emulate periodic mode
+	bits &= ~RELOAD_BIT;
 
 	ctrl |= bits;
 	writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
@@ -103,7 +95,7 @@ static inline void lux_timer_disable_bits(struct lux_clock_subscriber *sub, int 
 	}
 };
 
-static inline u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub) {
+u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub) {
 	u64 physical_time;
 
 	physical_time = readq(sub->lux_clock->base + REG_TIMER_TIME);
@@ -142,6 +134,51 @@ static inline int disable_async(struct lux_clock_subscriber *sub) {
 	sub->signo = 0;
 	put_task_struct(sub->async_task);
 	sub->async_task = NULL;
+
+	return 0;
+}
+
+void lux_reprogram_timer(struct lux_clock *lux_clock) {
+	// __u64 curr_phys_deadline = readq(lux_clock->base + REG_TIMER_CMP);
+	__u64 phys_deadline, min_phys_deadline = ~0ULL;
+	struct list_head *curr_node = NULL;
+	struct lux_clock_subscriber *sub = NULL;
+
+	// 1. Visit all subscribers; choose nearest one
+	list_for_each(curr_node, &lux_clock->subscribers) {
+		sub = container_of(curr_node, struct lux_clock_subscriber, node);
+		if (sub->deadline == 0) // Skip; inactive
+			continue;
+
+		phys_deadline = sub->deadline - sub->time_offset;
+
+		if (phys_deadline < min_phys_deadline)
+			min_phys_deadline = phys_deadline;
+	}
+
+	// 2. Reprogram the timer to fire for the nearest
+	if (min_phys_deadline != ~0ULL) {
+		writeq(min_phys_deadline, lux_clock->base + REG_TIMER_CMP);
+
+		u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
+		ctrl |= IRQ_BIT | TIMER_BIT;
+		writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
+		wmb();
+	}
+}
+
+// FOPS --------------
+int lux_timer_open(struct inode *inode, struct file *filp) {
+	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
+
+	struct lux_clock_subscriber *sub = kzalloc(sizeof(*sub), GFP_KERNEL);
+	sub->lux_clock = lux_clock;
+
+	filp->private_data = sub;
+
+	list_add(&sub->node, &lux_clock->subscribers);
+
+	pr_info(LUX_TIMER_DRIVER_NAME ": Opened character interface.\n");
 
 	return 0;
 }
@@ -252,8 +289,11 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			if (user_delta < LUX_TIMER_UNPRIV_MIN_DELTA && !capable(CAP_SYS_RESOURCE))
 				return -EACCES;
 
-			writeq(reg_cmp - sub->time_offset, lux_clock->base + REG_TIMER_CMP);
-			wmb();
+			raw_spin_lock_bh(&sub->irq_lock);
+			sub->deadline = time_now + user_delta;
+			raw_spin_unlock_bh(&sub->irq_lock);
+
+			lux_reprogram_timer(lux_clock);
 			break;
 
 		case LUX_AIE_ON:
@@ -279,12 +319,13 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 				return -EACCES;
 
 			time_now = lux_timer_read_virtual_time(sub);
-			// Neutralize virtualization for now (cmp is not yet virtualized)
-			reg_cmp = time_now + user_delta - sub->time_offset;
 
-			writeq(reg_cmp, lux_clock->base + REG_TIMER_CMP);
-			wmb();
+			raw_spin_lock_bh(&sub->irq_lock);
+			sub->deadline = time_now + user_delta;
+			sub->periodic_delta = user_delta;
+			raw_spin_unlock_bh(&sub->irq_lock);
 
+			lux_reprogram_timer(lux_clock);
 			lux_timer_enable_bits(sub, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
 			break;
 

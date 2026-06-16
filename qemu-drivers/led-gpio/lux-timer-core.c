@@ -11,6 +11,7 @@
 #include "linux/init.h"
 #include "linux/interrupt.h"
 #include "linux/irqdomain.h"
+#include "linux/list.h"
 #include "linux/miscdevice.h"
 #include "linux/platform_device.h"
 #include "linux/printk.h"
@@ -112,38 +113,43 @@ static int lux_ce_set_state_shutdown(struct clock_event_device *ce) {
 
 static void lux_timer_tasklet_func(struct tasklet_struct *t) {
 	struct lux_clock *lux_clock = container_of(t, struct lux_clock, timer_tasklet);
+	struct lux_clock_subscriber *sub = NULL;
 	pr_alert(LUX_TIMER_DRIVER_NAME ": [PID %d] TASKLET FIRRRRRRRRRRRRRRRRRED!\n", current->pid);
 
-	raw_spin_lock(&lux_clock->irq_lock);
-	lux_clock->irq_data += (1 << 8);
-
 	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
-	if (ctrl & RELOAD_BIT)
-		lux_clock->irq_data |= LUX_CLOCK_PERIODIC;
-	else
-		lux_clock->irq_data |= LUX_CLOCK_ALARM;
 
-	lux_clock->global_overruns++;
+	list_for_each_entry(sub, &lux_clock->subscribers, node) {
+		raw_spin_lock(&sub->irq_lock);
+		sub->irq_data += (1 << 8);
 
-	raw_spin_unlock(&lux_clock->irq_lock);
+		if (ctrl & RELOAD_BIT)
+			sub->irq_data |= LUX_CLOCK_PERIODIC;
+		else
+			sub->irq_data |= LUX_CLOCK_ALARM;
 
-	if (!lux_clock->async)
-		wake_up_interruptible_sync(&lux_clock->wait_queue);
-	else {
+		raw_spin_unlock(&sub->irq_lock);
+
+		// Notify the subscriber only if it is asynchronous
+		if (sub->async == false)
+			continue;
+
 		kernel_siginfo_t info = {0};
 
-		info.si_signo = lux_clock->signo;
+		info.si_signo = sub->signo;
 		info.si_code = SI_TIMER;
 		info.si_int = 1;
 
-		if (lux_clock->async_task != NULL) {
+		if (sub->async_task != NULL) {
 			pr_alert(LUX_TIMER_DRIVER_NAME ": Sending signal to task [%d]...\n",
-					 lux_clock->async_task->pid);
+					 sub->async_task->pid);
 
-			if (send_sig_info(lux_clock->signo, &info, lux_clock->async_task) < 0)
+			if (send_sig_info(sub->signo, &info, sub->async_task) < 0)
 				pr_alert(LUX_TIMER_DRIVER_NAME ": Unable to send signal...\n");
 		}
 	}
+
+	// Notify all synchronous waiters
+	wake_up_interruptible_sync(&lux_clock->wait_queue);
 }
 
 static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
@@ -306,7 +312,8 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		return ret;
 	}
 	init_waitqueue_head(&lux_clock->wait_queue);
-	raw_spin_lock_init(&lux_clock->irq_lock);
+	INIT_LIST_HEAD(&lux_clock->subscribers);
+	tasklet_setup(&lux_clock->timer_tasklet, lux_timer_tasklet_func);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");
 

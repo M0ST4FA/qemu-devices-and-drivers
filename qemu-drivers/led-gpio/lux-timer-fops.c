@@ -1,9 +1,12 @@
 #include "asm-generic/errno-base.h"
 #include "asm-generic/ioctl.h"
 #include "asm/current.h"
+#include "asm/io.h"
+#include "linux/atomic/atomic-instrumented.h"
 #include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/errno.h"
+#include "linux/list.h"
 #include "linux/printk.h"
 #include <linux/clockchips.h>
 #include <linux/clocksource.h>
@@ -12,6 +15,7 @@
 #include <linux/types.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
+#include "linux/slab.h"
 #include "linux/spinlock.h"
 #include "linux/wait.h"
 #include "lux.h"
@@ -26,40 +30,109 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
 int lux_timer_open(struct inode *inode, struct file *filp) {
 	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
 
+	struct lux_clock_subscriber *sub = kzalloc(sizeof(*sub), GFP_KERNEL);
+	sub->lux_clock = lux_clock;
+
+	filp->private_data = sub;
+
+	list_add(&sub->node, &lux_clock->subscribers);
+
 	pr_info(LUX_TIMER_DRIVER_NAME ": Opened character interface.\n");
 
 	return 0;
 }
 
-static inline void lux_timer_disable_bits(struct lux_clock *lux_clock, int bits) {
+static inline void lux_timer_enable_bits(struct lux_clock_subscriber *sub, int bits) {
+	struct lux_clock *lux_clock = sub->lux_clock;
+
+	if (bits == 0)
+		return;
+
 	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
-	ctrl &= ~bits;
+
+	if (!sub->enabled)
+		if (bits & (TIMER_BIT | IRQ_BIT)) {
+			atomic_inc(&lux_clock->enabled_users);
+			sub->enabled = true;
+		}
+
+	if (!sub->periodic)
+		if (bits & RELOAD_BIT) {
+			atomic_inc(&lux_clock->periodic_users);
+			sub->periodic = true;
+		}
+
+	ctrl |= bits;
 	writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
 	wmb();
 };
 
-static inline int disable_async(struct lux_clock *lux_clock) {
+static inline void lux_timer_disable_bits(struct lux_clock_subscriber *sub, int bits) {
+	struct lux_clock *lux_clock = sub->lux_clock;
+
+	if (bits == 0)
+		return;
+
+	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
+	u32 init_ctrl = ctrl;
+
+	if (sub->enabled)
+		if (bits & (TIMER_BIT | IRQ_BIT)) {
+			// If this is the last user
+			if (atomic_dec_and_test(&lux_clock->enabled_users)) {
+				if (bits & TIMER_BIT)
+					ctrl &= ~TIMER_BIT;
+
+				if (bits & IRQ_BIT)
+					ctrl &= ~IRQ_BIT;
+			}
+
+			sub->enabled = false;
+		}
+
+	if (sub->periodic)
+		if (bits & RELOAD_BIT) {
+			// If this is the last periodic user
+			if (atomic_dec_and_test(&lux_clock->periodic_users))
+				ctrl &= ~RELOAD_BIT;
+
+			sub->periodic = false;
+		}
+
+	if (ctrl ^ init_ctrl) {
+		writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
+		wmb();
+	}
+};
+
+static inline int disable_async(struct lux_clock_subscriber *sub) {
 	if (!capable(CAP_SYS_TIME))
 		return -EACCES;
 
-	if (lux_clock->async_task != current)
+	if (!sub->async)
+		return 0;
+
+	if (sub->async_task != current)
 		return -EPERM;
 
-	lux_clock->async = false;
-	lux_clock->signo = 0;
-	put_task_struct(lux_clock->async_task);
-	lux_clock->async_task = NULL;
+	sub->async = false;
+	sub->signo = 0;
+	put_task_struct(sub->async_task);
+	sub->async_task = NULL;
 
 	return 0;
 }
 
 int lux_timer_release(struct inode *inode, struct file *filp) {
-	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
+	struct lux_clock_subscriber *sub = filp->private_data;
 
-	if (lux_clock->async && lux_clock->async_task == current)
-		disable_async(lux_clock);
+	if (sub->async && sub->async_task == current)
+		disable_async(sub);
 
-	lux_timer_disable_bits(lux_clock, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
+	lux_timer_disable_bits(sub, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
+
+	list_del(&sub->node);
+	kfree(sub);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Closed character interface.\n");
 
@@ -69,30 +142,25 @@ int lux_timer_release(struct inode *inode, struct file *filp) {
 ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *offset) {
 	int ret = 0;
 	__u64 irq_data;
-	__u64 overruns;
 
-	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
+	struct lux_clock_subscriber *sub = filp->private_data;
+	struct lux_clock *lux_clock = sub->lux_clock;
 
-	if (len < sizeof(lux_clock->irq_data))
+	if (len < sizeof(sub->irq_data))
 		return -ENOSPC;
 
-	if (!lux_clock->async) { // Block only in synchronous mode
-		overruns = lux_clock->global_overruns;
-		ret = wait_event_interruptible(lux_clock->wait_queue, lux_clock->irq_data != 0);
+	if (!sub->async) { // Block only in synchronous mode
+		ret = wait_event_interruptible(lux_clock->wait_queue, sub->irq_data != 0);
 		if (ret < 0)
 			goto out;
 	}
 
-	raw_spin_lock_irq(&lux_clock->irq_lock);
+	raw_spin_lock_irq(&sub->irq_lock);
 
-	irq_data = lux_clock->irq_data;
+	irq_data = sub->irq_data;
+	sub->irq_data = 0;
 
-	if (!lux_clock->async) {
-		overruns = lux_clock->global_overruns - overruns;
-		irq_data = (overruns << 8) | (irq_data & 0xFF);
-	}
-
-	raw_spin_unlock_irq(&lux_clock->irq_lock);
+	raw_spin_unlock_irq(&sub->irq_lock);
 
 	ret = put_user(irq_data, (__u64 __user *)buf);
 	if (ret < 0)
@@ -111,15 +179,10 @@ ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, l
 	return -ENOTSUPP;
 }
 
-static inline void lux_timer_enable_bits(struct lux_clock *lux_clock, int bits) {
-	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
-	ctrl |= bits;
-	writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
-	wmb();
-};
-
 ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
-	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
+	struct lux_clock_subscriber *sub = filp->private_data;
+	struct lux_clock *lux_clock = sub->lux_clock;
+
 	__u64 time_now = 0, user_delta = 0, user_time = 0, reg_cmp = 0;
 
 	if (_IOC_TYPE(cmd) != LUX_IOCTL_MAGIC) {
@@ -145,7 +208,10 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 				return -EFAULT;
 			writeq(user_time, lux_clock->base + REG_TIMER_TIME);
 			wmb();
-			lux_timer_enable_bits(lux_clock, TIMER_BIT);
+			u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
+			ctrl |= TIMER_BIT;
+			writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
+			wmb();
 			break;
 
 		case LUX_ALM_RD:
@@ -175,13 +241,13 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 		case LUX_AIE_ON:
 			if (!capable(CAP_SYS_TIME))
 				return -EACCES;
-			lux_timer_enable_bits(lux_clock, TIMER_BIT | IRQ_BIT);
+			lux_timer_enable_bits(sub, TIMER_BIT | IRQ_BIT);
 			break;
 
 		case LUX_AIE_OFF:
 			if (!capable(CAP_SYS_TIME))
 				return -EACCES;
-			lux_timer_disable_bits(lux_clock, TIMER_BIT | IRQ_BIT);
+			lux_timer_disable_bits(sub, TIMER_BIT | IRQ_BIT);
 			break;
 
 		case LUX_IRQP_SET:
@@ -200,39 +266,46 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 
 			writeq(reg_cmp, lux_clock->base + REG_TIMER_CMP);
 			wmb();
-			lux_timer_enable_bits(lux_clock, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
+
+			lux_timer_enable_bits(sub, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
 			break;
 
 		case LUX_PIE_ON:
 			if (!capable(CAP_SYS_TIME))
 				return -EACCES;
-			lux_timer_enable_bits(lux_clock, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
+
+			lux_timer_enable_bits(sub, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
 			break;
 
 		case LUX_PIE_OFF:
 			if (!capable(CAP_SYS_TIME))
 				return -EACCES;
-			lux_timer_disable_bits(lux_clock, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
+
+			lux_timer_disable_bits(sub, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
 			break;
 
 		case LUX_ALM_ASYNC_ON:
 			if (!capable(CAP_SYS_TIME))
 				return -EACCES;
 
+			if (sub->async)
+				break;
+
 			// Only one task can be in async mode for now
-			if (lux_clock->async_task)
+			if (sub->async_task)
 				return -EBUSY;
 
-			if (get_user(lux_clock->signo, (__u32 __user *)arg) < 0)
+			if (get_user(sub->signo, (__u32 __user *)arg) < 0)
 				return -EFAULT;
 
-			lux_clock->async = true;
-			lux_clock->async_task = get_task_struct(current);
+			sub->async = true;
+			sub->async_task = get_task_struct(current);
 
 			break;
 
 		case LUX_ALM_ASYNC_OFF:
-			return disable_async(lux_clock);
+			if (sub->async)
+				return disable_async(sub);
 			break;
 
 		default:

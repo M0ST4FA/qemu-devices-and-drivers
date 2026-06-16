@@ -2,7 +2,6 @@
 
 #include "linux/clocksource.h"
 #include "linux/hrtimer.h"
-#include "linux/interrupt.h"
 #include "linux/miscdevice.h"
 #include <linux/cdev.h>
 #include <linux/clockchips.h>
@@ -45,10 +44,16 @@ struct lux_function {
 	struct list_head node; // Allows the bus to keep a list of devices
 };
 
-struct lux_timer_subscriber {
+struct lux_clock_subscriber {
 	struct list_head node;
 
+	struct lux_clock *lux_clock;
+
+	raw_spinlock_t irq_lock;
 	u64 irq_data;
+
+	bool enabled;
+	bool periodic;
 
 	bool async;
 	int signo;
@@ -62,13 +67,11 @@ struct lux_clock {
 	void __iomem *base;
 	int ce_cpu;
 
-	bool async;
-	int signo;
-	struct task_struct *async_task;
+	raw_spinlock_t subscribers_lock;
+	struct list_head subscribers;
+	atomic_t enabled_users;
+	atomic_t periodic_users;
 
-	raw_spinlock_t irq_lock;
-	__u64 irq_data;
-	__u64 global_overruns;
 	struct tasklet_struct timer_tasklet;
 	wait_queue_head_t wait_queue;
 };

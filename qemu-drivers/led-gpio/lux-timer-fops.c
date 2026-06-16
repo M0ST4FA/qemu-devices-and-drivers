@@ -1,8 +1,6 @@
 #include "asm-generic/errno-base.h"
 #include "asm-generic/ioctl.h"
 #include "asm/current.h"
-#include "asm/io.h"
-#include "linux/atomic/atomic-instrumented.h"
 #include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/errno.h"
@@ -105,6 +103,31 @@ static inline void lux_timer_disable_bits(struct lux_clock_subscriber *sub, int 
 	}
 };
 
+static inline u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub) {
+	u64 physical_time;
+
+	physical_time = readq(sub->lux_clock->base + REG_TIMER_TIME);
+	rmb();
+
+	return physical_time + sub->time_offset;
+}
+
+static inline void lux_timer_set_time(struct lux_clock_subscriber *sub, __u64 user_time) {
+	struct lux_clock *lux_clock = sub->lux_clock;
+	u64 physical_time;
+
+	physical_time = readq(lux_clock->base + REG_TIMER_TIME);
+	rmb();
+
+	sub->time_offset = user_time - physical_time;
+
+	// Should not reference count as this is administrative
+	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
+	ctrl |= TIMER_BIT;
+	writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
+	wmb();
+}
+
 static inline int disable_async(struct lux_clock_subscriber *sub) {
 	if (!capable(CAP_SYS_TIME))
 		return -EACCES;
@@ -155,12 +178,12 @@ ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *
 			goto out;
 	}
 
-	raw_spin_lock_irq(&sub->irq_lock);
+	raw_spin_lock_bh(&sub->irq_lock);
 
 	irq_data = sub->irq_data;
 	sub->irq_data = 0;
 
-	raw_spin_unlock_irq(&sub->irq_lock);
+	raw_spin_unlock_bh(&sub->irq_lock);
 
 	ret = put_user(irq_data, (__u64 __user *)buf);
 	if (ret < 0)
@@ -196,8 +219,7 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 
 	switch (cmd) {
 		case LUX_TIME_RD:
-			time_now = readq(lux_clock->base + REG_TIMER_TIME);
-			rmb();
+			time_now = lux_timer_read_virtual_time(sub);
 			return put_user(time_now, (__u64 __user *)arg);
 			break;
 
@@ -206,17 +228,13 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 				return -EACCES;
 			if (get_user(user_time, (__u64 __user *)arg) < 0)
 				return -EFAULT;
-			writeq(user_time, lux_clock->base + REG_TIMER_TIME);
-			wmb();
-			u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
-			ctrl |= TIMER_BIT;
-			writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
-			wmb();
+			lux_timer_set_time(sub, user_time);
 			break;
 
 		case LUX_ALM_RD:
 			reg_cmp = readq(lux_clock->base + REG_TIMER_CMP);
 			rmb();
+			reg_cmp += sub->time_offset; // Virtualize timer register
 			return put_user(reg_cmp, (__u64 __user *)arg);
 			break;
 
@@ -226,15 +244,15 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			if (get_user(reg_cmp, (__u64 __user *)arg) < 0)
 				return -EFAULT;
 
-			time_now = readq(lux_clock->base + REG_TIMER_TIME);
-			rmb();
+			time_now = lux_timer_read_virtual_time(sub);
+			// Neutralize virtualization for now (cmp is not yet virtualized
 			user_delta = reg_cmp - time_now;
 
 			// Set a limit on unprivileged users
 			if (user_delta < LUX_TIMER_UNPRIV_MIN_DELTA && !capable(CAP_SYS_RESOURCE))
 				return -EACCES;
 
-			writeq(reg_cmp, lux_clock->base + REG_TIMER_CMP);
+			writeq(reg_cmp - sub->time_offset, lux_clock->base + REG_TIMER_CMP);
 			wmb();
 			break;
 
@@ -260,9 +278,9 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			if (user_delta < LUX_TIMER_UNPRIV_MIN_DELTA && !capable(CAP_SYS_RESOURCE))
 				return -EACCES;
 
-			time_now = readq(lux_clock->base + REG_TIMER_TIME);
-			rmb();
-			reg_cmp = time_now + user_delta;
+			time_now = lux_timer_read_virtual_time(sub);
+			// Neutralize virtualization for now (cmp is not yet virtualized)
+			reg_cmp = time_now + user_delta - sub->time_offset;
 
 			writeq(reg_cmp, lux_clock->base + REG_TIMER_CMP);
 			wmb();

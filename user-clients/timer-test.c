@@ -86,7 +86,7 @@ static int timer_test_alarm(int fd, int pid, __u64 alarm) {
 		err(EXIT_FAILURE, "[%d] ioctl LUX_TIME_RD", pid);
 
 	printf("[%d] Expected to wakeup at: %llums, wokeup at: %llums, diff: %lldms\n",
-		   pid, NSEC_TO_MSEC(alarm), NSEC_TO_MSEC(now), (long long)NSEC_TO_MSEC(now - alarm));
+		   pid, NSEC_TO_MSEC(alarm), NSEC_TO_MSEC(now), (long long)NSEC_TO_MSEC(now) - (long long)NSEC_TO_MSEC(alarm));
 
 	return overruns;
 }

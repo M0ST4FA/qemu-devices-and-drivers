@@ -48,6 +48,7 @@ struct lux_clock_subscriber {
 	struct list_head node;
 
 	struct lux_clock *lux_clock;
+	int64_t time_offset;
 
 	raw_spinlock_t irq_lock;
 	u64 irq_data;

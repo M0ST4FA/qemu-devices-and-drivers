@@ -14,6 +14,7 @@
 #include "linux/list.h"
 #include "linux/miscdevice.h"
 #include "linux/platform_device.h"
+#include "linux/preempt.h"
 #include "linux/printk.h"
 #include <linux/clockchips.h>
 #include <linux/clocksource.h>
@@ -24,6 +25,7 @@
 #include "linux/sched/signal.h"
 #include "linux/spinlock.h"
 #include "linux/wait.h"
+#include "linux/workqueue.h"
 #include "lux.h"
 #include "lux_ioctl.h"
 
@@ -114,13 +116,14 @@ static int lux_ce_set_state_shutdown(struct clock_event_device *ce) {
 	return 0;
 }
 
-static void lux_timer_tasklet_func(struct tasklet_struct *t) {
-	struct lux_clock *lux_clock = container_of(t, struct lux_clock, timer_tasklet);
+static void lux_timer_work_func(struct work_struct *t) {
+	struct lux_clock *lux_clock = container_of(t, struct lux_clock, timer_work);
 	struct lux_clock_subscriber *sub = NULL;
-	pr_alert(LUX_TIMER_DRIVER_NAME ": [PID %d] TASKLET FIRRRRRRRRRRRRRRRRRED!\n", current->pid);
+	pr_alert(LUX_TIMER_DRIVER_NAME ": [PID %d] WORK FIRRRRRRRRRRRRRRRRRED!\n", current->pid);
+	pr_alert(LUX_TIMER_DRIVER_NAME ": In interrupt: %ld, in hardirq: %ld, in atomic: %d, in task: %d\n",
+			 in_interrupt(), in_hardirq(), in_atomic(), in_task());
 
 	list_for_each_entry(sub, &lux_clock->subscribers, node) {
-
 		raw_spin_lock(&sub->irq_lock);
 		if (sub->deadline == 0) { // Timer not active
 			raw_spin_unlock(&sub->irq_lock);
@@ -174,6 +177,8 @@ static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 	struct lux_clock *lux_clock = dev_id;
 
 	pr_alert(LUX_TIMER_DRIVER_NAME ": TIMER FIRRRRRRRRRRRRRRRRRED!\n");
+	pr_alert(LUX_TIMER_DRIVER_NAME ": In interrupt: %lu, in hardirq: %lu, in atomic: %d, in task: %d\n",
+			 in_interrupt(), in_hardirq(), in_atomic(), in_task());
 
 	// 1. Ack the hardware
 	// writel((1 << HWIRQ_TIMER), base + REG_IRQ_ACK);
@@ -181,7 +186,9 @@ static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 	// NOTE: No need, genirq already calls lux_irq_ack in its flow handler
 
 	// 2. Handle cdev interface
-	tasklet_schedule(&lux_clock->timer_tasklet);
+	if (work_pending(&lux_clock->timer_work))
+		pr_alert(LUX_TIMER_DRIVER_NAME ": Work is still pending...scheduling new work\n");
+	schedule_work_on(smp_processor_id(), &lux_clock->timer_work);
 
 	// 3. Wakeup the Linux schedular
 	if (lux_clock->ce.event_handler)
@@ -266,7 +273,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 	lux_clock = devm_kzalloc(dev, sizeof(*lux_clock), GFP_KERNEL);
 	lux_clock->base = lux_function->bar[0];
 
-	// 2. Request the virq (i.e. register a handler for it)
+	// 2. Register interrupt handlers
 	pr_info(LUX_IRQ_DRIVER_NAME ": domain ptr %p, virq: %d\n", lux_function->irq_domain, virq);
 	ret = devm_request_irq(dev, virq, lux_ce_timer_isr,
 						   IRQF_TIMER | IRQF_IRQPOLL, LUX_TIMER_DRIVER_NAME,
@@ -275,9 +282,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		dev_err(dev, LUX_TIMER_DRIVER_NAME ": Failed to request virq (register a handler with it)\n");
 		return ret;
 	}
-
-	// Register tasklet
-	tasklet_setup(&lux_clock->timer_tasklet, lux_timer_tasklet_func);
+	INIT_WORK(&lux_clock->timer_work, lux_timer_work_func);
 
 	// 3. Register the clocksource
 	struct clocksource *cs = &lux_clock->cs;
@@ -331,7 +336,6 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 	}
 	init_waitqueue_head(&lux_clock->wait_queue);
 	INIT_LIST_HEAD(&lux_clock->subscribers);
-	tasklet_setup(&lux_clock->timer_tasklet, lux_timer_tasklet_func);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");
 
@@ -343,7 +347,10 @@ static void lux_driver_timer_remove(struct platform_device *platdev) {
 	struct device *dev = &platdev->dev;
 	struct lux_clock *lux_clock = platform_get_drvdata(platdev);
 
-	tasklet_kill(&lux_clock->timer_tasklet);
+	if (work_pending(&lux_clock->timer_work)) {
+		pr_alert(LUX_TIMER_DRIVER_NAME ": Pending work detected while removing timer device...flushing\n");
+		flush_work(&lux_clock->timer_work);
+	}
 
 	misc_deregister(&lux_clock->misc);
 

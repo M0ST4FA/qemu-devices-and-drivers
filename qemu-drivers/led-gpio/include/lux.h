@@ -3,6 +3,7 @@
 #include "linux/clocksource.h"
 #include "linux/hrtimer.h"
 #include "linux/miscdevice.h"
+#include "linux/workqueue_types.h"
 #include <linux/cdev.h>
 #include <linux/clockchips.h>
 #include <linux/pci.h>
@@ -77,6 +78,6 @@ struct lux_clock {
 	atomic_t enabled_users;
 	atomic_t periodic_users;
 
-	struct tasklet_struct timer_tasklet;
+	struct work_struct timer_work;
 	wait_queue_head_t wait_queue;
 };

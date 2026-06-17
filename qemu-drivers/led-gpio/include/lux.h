@@ -79,5 +79,6 @@ struct lux_clock {
 	atomic_t periodic_users;
 
 	struct work_struct timer_work;
+	struct workqueue_struct *workqueue;
 	wait_queue_head_t wait_queue;
 };

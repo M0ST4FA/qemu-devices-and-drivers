@@ -23,6 +23,7 @@
 
 #include "../../qemu-devices/lux/include/hw.h"
 #include "linux/sched/signal.h"
+#include "linux/smp.h"
 #include "linux/spinlock.h"
 #include "linux/wait.h"
 #include "linux/workqueue.h"
@@ -188,7 +189,7 @@ static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
 	// 2. Handle cdev interface
 	if (work_pending(&lux_clock->timer_work))
 		pr_alert(LUX_TIMER_DRIVER_NAME ": Work is still pending...scheduling new work\n");
-	schedule_work_on(smp_processor_id(), &lux_clock->timer_work);
+	queue_work_on(smp_processor_id(), lux_clock->workqueue, &lux_clock->timer_work);
 
 	// 3. Wakeup the Linux schedular
 	if (lux_clock->ce.event_handler)
@@ -282,6 +283,12 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		dev_err(dev, LUX_TIMER_DRIVER_NAME ": Failed to request virq (register a handler with it)\n");
 		return ret;
 	}
+	lux_clock->workqueue = create_singlethread_workqueue("lux-timer");
+	if (lux_clock->workqueue == NULL) {
+		dev_err(dev, LUX_TIMER_DRIVER_NAME ": Failed to allocate workqueue\n");
+		return -ENOMEM;
+	}
+
 	INIT_WORK(&lux_clock->timer_work, lux_timer_work_func);
 
 	// 3. Register the clocksource
@@ -351,6 +358,8 @@ static void lux_driver_timer_remove(struct platform_device *platdev) {
 		pr_alert(LUX_TIMER_DRIVER_NAME ": Pending work detected while removing timer device...flushing\n");
 		flush_work(&lux_clock->timer_work);
 	}
+
+	destroy_workqueue(lux_clock->workqueue);
 
 	misc_deregister(&lux_clock->misc);
 

@@ -1,5 +1,6 @@
 #include "asm-generic/int-ll64.h"
 #include "asm-generic/siginfo.h"
+#include "asm/io.h"
 #include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/cpumask.h"
@@ -14,7 +15,6 @@
 #include "linux/list.h"
 #include "linux/miscdevice.h"
 #include "linux/platform_device.h"
-#include "linux/preempt.h"
 #include "linux/printk.h"
 #include <linux/clockchips.h>
 #include <linux/clocksource.h>
@@ -22,6 +22,8 @@
 #include <linux/sched_clock.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
+#include "linux/rbtree.h"
+#include "linux/rbtree_types.h"
 #include "linux/sched/signal.h"
 #include "linux/smp.h"
 #include "linux/spinlock.h"
@@ -41,6 +43,7 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
 
 u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub);
 void lux_reprogram_timer(struct lux_clock *lux_clock);
+void lux_timer_enqueue(struct lux_clock_subscriber *new_sub);
 
 static struct file_operations misc_fops = {
 	.owner = THIS_MODULE,
@@ -119,52 +122,67 @@ static int lux_ce_set_state_shutdown(struct clock_event_device *ce) {
 
 static void lux_timer_work_func(struct work_struct *t) {
 	struct lux_clock *lux_clock = container_of(t, struct lux_clock, timer_work);
-	struct lux_clock_subscriber *sub = NULL;
+	struct rb_root_cached *rb_root = &lux_clock->subscribers;
+
 	pr_alert(LUX_TIMER_DRIVER_NAME ": [PID %d] WORK FIRRRRRRRRRRRRRRRRRED!\n", current->pid);
 	pr_alert(LUX_TIMER_DRIVER_NAME ": In interrupt: %ld, in hardirq: %ld, in atomic: %d, in task: %d\n",
 			 in_interrupt(), in_hardirq(), in_atomic(), in_task());
 
-	list_for_each_entry(sub, &lux_clock->subscribers, node) {
-		raw_spin_lock(&sub->irq_lock);
-		if (sub->deadline == 0) { // Timer not active
-			raw_spin_unlock(&sub->irq_lock);
-			continue;
-		}
-		u64 virt_time = lux_timer_read_virtual_time(sub);
-		if (sub->deadline > virt_time) { // Deadline not met yet
-			raw_spin_unlock(&sub->irq_lock);
-			continue;
+	spin_lock_bh(&lux_clock->subscribers_lock);
+
+	while (1) {
+		// 1. Get the earliest deadline
+		struct rb_node *first = rb_first_cached(rb_root);
+		if (!first)
+			break; // Tree is empty
+
+		struct lux_clock_subscriber *sub = rb_entry(first, struct lux_clock_subscriber, node);
+
+		// 2. Check if it has actually expired
+		u64 virt_now = lux_timer_read_virtual_time(sub);
+		if (sub->deadline > virt_now) {
+			break; // Nothing left to do: earliest deadline is in the future
 		}
 
+		// --- TIMER EXPIRED ---
+
+		// 3. Remove it from the tree temporarily so that we can process it
+		rb_erase_cached(&sub->node, rb_root);
+		RB_CLEAR_NODE(&sub->node);
+
+		// 4. Wake process up (either through waitqueue or signal)
+
+		raw_spin_lock(&sub->irq_lock);
 		sub->irq_data += (1 << 8);
 
 		if (sub->periodic) {
 			sub->irq_data |= LUX_CLOCK_PERIODIC;
-			sub->deadline += sub->periodic_delta;
+			sub->deadline += sub->periodic_delta; // Emulated reload
 		} else {
 			sub->irq_data |= LUX_CLOCK_ALARM;
 			sub->deadline = 0;
 		}
-
 		raw_spin_unlock(&sub->irq_lock);
 
-		// Notify the subscriber only if it is asynchronous
-		if (sub->async == false)
-			continue;
+		if (sub->async) {
+			kernel_siginfo_t info = {0};
 
-		kernel_siginfo_t info = {0};
+			info.si_signo = sub->signo;
+			info.si_code = SI_TIMER;
+			info.si_int = 1;
 
-		info.si_signo = sub->signo;
-		info.si_code = SI_TIMER;
-		info.si_int = 1;
+			if (sub->async_task != NULL) {
+				pr_alert(LUX_TIMER_DRIVER_NAME ": Sending signal to task [%d]...\n",
+						 sub->async_task->pid);
 
-		if (sub->async_task != NULL) {
-			pr_alert(LUX_TIMER_DRIVER_NAME ": Sending signal to task [%d]...\n",
-					 sub->async_task->pid);
-
-			if (send_sig_info(sub->signo, &info, sub->async_task) < 0)
-				pr_alert(LUX_TIMER_DRIVER_NAME ": Unable to send signal...\n");
+				if (send_sig_info(sub->signo, &info, sub->async_task) < 0)
+					pr_alert(LUX_TIMER_DRIVER_NAME ": Unable to send signal...\n");
+			}
 		}
+
+		// 5. Add it again if it were periodic
+		if (sub->periodic)
+			lux_timer_enqueue(sub);
 	}
 
 	// Notify all synchronous waiters
@@ -172,6 +190,8 @@ static void lux_timer_work_func(struct work_struct *t) {
 
 	// Reprogram timer
 	lux_reprogram_timer(lux_clock);
+
+	spin_unlock_bh(&lux_clock->subscribers_lock);
 }
 
 static irqreturn_t notrace lux_ce_timer_isr(int irq, void *dev_id) {
@@ -342,7 +362,7 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		return ret;
 	}
 	init_waitqueue_head(&lux_clock->wait_queue);
-	INIT_LIST_HEAD(&lux_clock->subscribers);
+	lux_clock->subscribers = RB_ROOT_CACHED;
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");
 

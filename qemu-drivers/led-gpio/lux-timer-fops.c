@@ -1,6 +1,7 @@
 #include "asm-generic/errno-base.h"
 #include "asm-generic/ioctl.h"
 #include "asm/current.h"
+#include "asm/io.h"
 #include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/errno.h"
@@ -13,6 +14,7 @@
 #include <linux/types.h>
 
 #include "../../qemu-devices/lux/include/hw.h"
+#include "linux/rbtree.h"
 #include "linux/slab.h"
 #include "linux/spinlock.h"
 #include "linux/wait.h"
@@ -27,6 +29,7 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
 
 u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub);
 void lux_reprogram_timer(struct lux_clock *lux_clock);
+void lux_timer_enqueue(struct lux_clock_subscriber *new_sub);
 
 // HELPER FUNCTIONS ------------
 static inline void lux_timer_enable_bits(struct lux_clock_subscriber *sub, int bits) {
@@ -140,31 +143,63 @@ static inline int disable_async(struct lux_clock_subscriber *sub) {
 
 void lux_reprogram_timer(struct lux_clock *lux_clock) {
 	// __u64 curr_phys_deadline = readq(lux_clock->base + REG_TIMER_CMP);
-	__u64 phys_deadline, min_phys_deadline = ~0ULL;
-	struct list_head *curr_node = NULL;
-	struct lux_clock_subscriber *sub = NULL;
+	__u64 min_phys_deadline = ~0ULL;
+	struct lux_clock_subscriber *min_sub = NULL;
 
-	// 1. Visit all subscribers; choose nearest one
-	list_for_each(curr_node, &lux_clock->subscribers) {
-		sub = container_of(curr_node, struct lux_clock_subscriber, node);
-		if (sub->deadline == 0) // Skip; inactive
-			continue;
+	struct rb_node *first = rb_first_cached(&lux_clock->subscribers);
 
-		phys_deadline = sub->deadline - sub->time_offset;
-
-		if (phys_deadline < min_phys_deadline)
-			min_phys_deadline = phys_deadline;
-	}
-
-	// 2. Reprogram the timer to fire for the nearest
-	if (min_phys_deadline != ~0ULL) {
-		writeq(min_phys_deadline, lux_clock->base + REG_TIMER_CMP);
-
+	if (!first) { // Tree is empty
 		u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
-		ctrl |= IRQ_BIT | TIMER_BIT;
+		ctrl &= ~(IRQ_BIT | RELOAD_BIT);
 		writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
 		wmb();
+		return;
 	}
+
+	// If tree is not empty, reprogram the timer to fire for the nearest
+	min_sub = rb_entry(first, struct lux_clock_subscriber, node);
+	min_phys_deadline = min_sub->deadline - min_sub->time_offset;
+
+	// Write the comparator value
+	writeq(min_phys_deadline, lux_clock->base + REG_TIMER_CMP);
+	wmb();
+
+	// Make sure timer and interrupts are enabled
+	u32 ctrl = readl(lux_clock->base + REG_TIMER_CTRL);
+	ctrl |= IRQ_BIT | TIMER_BIT;
+	writel(ctrl, lux_clock->base + REG_TIMER_CTRL);
+	wmb();
+}
+
+void lux_timer_enqueue(struct lux_clock_subscriber *new_sub) {
+	struct lux_clock *lux_clock = new_sub->lux_clock;
+	struct rb_root_cached *root = &lux_clock->subscribers; // Tree root
+
+	struct rb_node **link = &lux_clock->subscribers.rb_root.rb_node, // Should eventually point to either left or right node of parent
+		*parent = NULL;												 // Should eventually identify the parent of the new node
+	struct lux_clock_subscriber *parent_sub = NULL;					 // Pointer to the parent node subscriber
+
+	bool leftmost = true; // Keep track of whether we're the leftmost or not
+						  // if we take at least a single right turn, we're not
+
+	// 1. Walk the tree to find the right insertion point
+	while (*link) {
+		parent = *link;
+		parent_sub = rb_entry(parent, struct lux_clock_subscriber, node);
+
+		if (parent_sub->deadline < new_sub->deadline)
+			link = &parent->rb_left;
+		else {
+			link = &parent->rb_right;
+			leftmost = false; // I'm going right, so my deadline is not the absolute minimum
+		}
+	}
+
+	// 2. Link the new node into the tree
+	rb_link_node(&new_sub->node, parent, link);
+
+	// 3. Rebalance the tree and update the cached leftmost node!
+	rb_insert_color_cached(&new_sub->node, root, leftmost);
 }
 
 // FOPS --------------
@@ -172,11 +207,10 @@ int lux_timer_open(struct inode *inode, struct file *filp) {
 	struct lux_clock *lux_clock = container_of(filp->private_data, struct lux_clock, misc);
 
 	struct lux_clock_subscriber *sub = kzalloc(sizeof(*sub), GFP_KERNEL);
+	RB_CLEAR_NODE(&sub->node);
 	sub->lux_clock = lux_clock;
 
 	filp->private_data = sub;
-
-	list_add(&sub->node, &lux_clock->subscribers);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Opened character interface.\n");
 
@@ -185,13 +219,20 @@ int lux_timer_open(struct inode *inode, struct file *filp) {
 
 int lux_timer_release(struct inode *inode, struct file *filp) {
 	struct lux_clock_subscriber *sub = filp->private_data;
+	struct lux_clock *lux_clock = sub->lux_clock;
 
 	if (sub->async && sub->async_task == current)
 		disable_async(sub);
 
 	lux_timer_disable_bits(sub, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
 
-	list_del(&sub->node);
+	spin_lock_bh(&lux_clock->subscribers_lock);
+	if (!RB_EMPTY_NODE(&sub->node)) {
+		rb_erase_cached(&sub->node, &sub->lux_clock->subscribers);
+		RB_CLEAR_NODE(&sub->node);
+	}
+	spin_unlock_bh(&lux_clock->subscribers_lock);
+
 	kfree(sub);
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Closed character interface.\n");
@@ -242,6 +283,7 @@ ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, l
 ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 	struct lux_clock_subscriber *sub = filp->private_data;
 	struct lux_clock *lux_clock = sub->lux_clock;
+	struct rb_root_cached *rb_root = &lux_clock->subscribers;
 
 	__u64 time_now = 0, user_delta = 0, user_time = 0, reg_cmp = 0;
 
@@ -289,9 +331,22 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			if (user_delta < LUX_TIMER_UNPRIV_MIN_DELTA && !capable(CAP_SYS_RESOURCE))
 				return -EACCES;
 
+			spin_lock_bh(&lux_clock->subscribers_lock);
+
+			// Remove old node
+			if (!RB_EMPTY_NODE(&sub->node)) {
+				rb_erase_cached(&sub->node, rb_root);
+				RB_CLEAR_NODE(&sub->node);
+			}
+
+			// Change deadline
 			raw_spin_lock_bh(&sub->irq_lock);
 			sub->deadline = time_now + user_delta;
 			raw_spin_unlock_bh(&sub->irq_lock);
+
+			// Reinsert (which rebalances the tree)
+			lux_timer_enqueue(sub);
+			spin_unlock_bh(&lux_clock->subscribers_lock);
 
 			lux_reprogram_timer(lux_clock);
 			break;
@@ -320,12 +375,25 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 
 			time_now = lux_timer_read_virtual_time(sub);
 
+			spin_lock_bh(&lux_clock->subscribers_lock);
+
+			// Remove old node
+			if (!RB_EMPTY_NODE(&sub->node)) {
+				rb_erase_cached(&sub->node, rb_root);
+				RB_CLEAR_NODE(&sub->node);
+			}
+
+			// Change deadline and delta
 			raw_spin_lock_bh(&sub->irq_lock);
 			sub->deadline = time_now + user_delta;
 			sub->periodic_delta = user_delta;
 			raw_spin_unlock_bh(&sub->irq_lock);
 
+			// Reinsert
+			lux_timer_enqueue(sub);
 			lux_reprogram_timer(lux_clock);
+			spin_unlock_bh(&lux_clock->subscribers_lock);
+
 			lux_timer_enable_bits(sub, TIMER_BIT | IRQ_BIT | RELOAD_BIT);
 			break;
 

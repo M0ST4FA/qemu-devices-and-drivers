@@ -3,10 +3,12 @@
 #include "linux/clocksource.h"
 #include "linux/hrtimer.h"
 #include "linux/miscdevice.h"
+#include "linux/rbtree_types.h"
 #include "linux/workqueue_types.h"
 #include <linux/cdev.h>
 #include <linux/clockchips.h>
 #include <linux/pci.h>
+#include <linux/rbtree.h>
 #include <linux/types.h>
 
 #define LUX_BUS_NAME "lux-core"
@@ -46,7 +48,7 @@ struct lux_function {
 };
 
 struct lux_clock_subscriber {
-	struct list_head node;
+	struct rb_node node;
 
 	struct lux_clock *lux_clock;
 	int64_t time_offset;
@@ -73,8 +75,8 @@ struct lux_clock {
 	void __iomem *base;
 	int ce_cpu;
 
-	raw_spinlock_t subscribers_lock;
-	struct list_head subscribers;
+	spinlock_t subscribers_lock;
+	struct rb_root_cached subscribers;
 	atomic_t enabled_users;
 	atomic_t periodic_users;
 

@@ -60,6 +60,7 @@ struct lux_clock_subscriber {
 	u64 periodic_delta;
 	u64 deadline;
 	u64 phys_deadline;
+	wait_queue_head_t wait_queue;
 
 	bool enabled;
 	bool periodic;
@@ -83,5 +84,4 @@ struct lux_clock {
 
 	struct work_struct timer_work;
 	struct workqueue_struct *workqueue;
-	wait_queue_head_t wait_queue;
 };

@@ -179,15 +179,14 @@ static void lux_timer_work_func(struct work_struct *t) {
 				if (send_sig_info(sub->signo, &info, sub->async_task) < 0)
 					pr_alert(LUX_TIMER_DRIVER_NAME ": Unable to send signal...\n");
 			}
+		} else {
+			wake_up_interruptible_sync(&sub->wait_queue);
 		}
 
 		// 5. Add it again if it were periodic
 		if (sub->periodic)
 			lux_timer_enqueue(sub);
 	}
-
-	// Notify all synchronous waiters
-	wake_up_interruptible_sync(&lux_clock->wait_queue);
 
 	// Reprogram timer
 	lux_reprogram_timer(lux_clock);
@@ -362,7 +361,6 @@ static int lux_driver_timer_probe(struct platform_device *platdev) {
 		pr_err(LUX_TIMER_DRIVER_NAME ": Failed to register miscdevice for cdev interface.\n");
 		return ret;
 	}
-	init_waitqueue_head(&lux_clock->wait_queue);
 	lux_clock->subscribers = RB_ROOT_CACHED;
 
 	pr_info(LUX_TIMER_DRIVER_NAME ": Clocksource and clockevent loaded. Ready for the storm from the clockevent.\n");

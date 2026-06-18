@@ -219,6 +219,8 @@ int lux_timer_open(struct inode *inode, struct file *filp) {
 
 	struct lux_clock_subscriber *sub = kzalloc(sizeof(*sub), GFP_KERNEL);
 	RB_CLEAR_NODE(&sub->node);
+	init_waitqueue_head(&sub->wait_queue);
+
 	sub->lux_clock = lux_clock;
 
 	filp->private_data = sub;
@@ -256,13 +258,12 @@ ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *
 	__u64 irq_data;
 
 	struct lux_clock_subscriber *sub = filp->private_data;
-	struct lux_clock *lux_clock = sub->lux_clock;
 
 	if (len < sizeof(sub->irq_data))
 		return -ENOSPC;
 
 	if (!sub->async) { // Block only in synchronous mode
-		ret = wait_event_interruptible(lux_clock->wait_queue, sub->irq_data != 0);
+		ret = wait_event_interruptible(sub->wait_queue, sub->irq_data != 0);
 		if (ret < 0)
 			goto out;
 	}

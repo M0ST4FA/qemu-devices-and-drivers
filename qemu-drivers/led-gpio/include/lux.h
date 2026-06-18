@@ -59,6 +59,7 @@ struct lux_clock_subscriber {
 	// Deadline in subscriber virtual timespace
 	u64 periodic_delta;
 	u64 deadline;
+	u64 phys_deadline;
 
 	bool enabled;
 	bool periodic;

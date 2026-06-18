@@ -12,7 +12,6 @@
 #include "linux/init.h"
 #include "linux/interrupt.h"
 #include "linux/irqdomain.h"
-#include "linux/list.h"
 #include "linux/miscdevice.h"
 #include "linux/platform_device.h"
 #include "linux/printk.h"
@@ -129,6 +128,8 @@ static void lux_timer_work_func(struct work_struct *t) {
 			 in_interrupt(), in_hardirq(), in_atomic(), in_task());
 
 	spin_lock_bh(&lux_clock->subscribers_lock);
+	u64 phys_now = readq(lux_clock->base + REG_TIMER_TIME);
+	rmb();
 
 	while (1) {
 		// 1. Get the earliest deadline
@@ -139,8 +140,7 @@ static void lux_timer_work_func(struct work_struct *t) {
 		struct lux_clock_subscriber *sub = rb_entry(first, struct lux_clock_subscriber, node);
 
 		// 2. Check if it has actually expired
-		u64 virt_now = lux_timer_read_virtual_time(sub);
-		if (sub->deadline > virt_now) {
+		if (sub->phys_deadline > phys_now) {
 			break; // Nothing left to do: earliest deadline is in the future
 		}
 
@@ -151,16 +151,17 @@ static void lux_timer_work_func(struct work_struct *t) {
 		RB_CLEAR_NODE(&sub->node);
 
 		// 4. Wake process up (either through waitqueue or signal)
-
 		raw_spin_lock(&sub->irq_lock);
 		sub->irq_data += (1 << 8);
 
 		if (sub->periodic) {
 			sub->irq_data |= LUX_CLOCK_PERIODIC;
 			sub->deadline += sub->periodic_delta; // Emulated reload
+			sub->phys_deadline = sub->deadline - sub->time_offset;
 		} else {
 			sub->irq_data |= LUX_CLOCK_ALARM;
 			sub->deadline = 0;
+			sub->phys_deadline = 0;
 		}
 		raw_spin_unlock(&sub->irq_lock);
 

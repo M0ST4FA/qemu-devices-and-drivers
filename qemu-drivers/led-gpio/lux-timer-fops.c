@@ -1,11 +1,9 @@
 #include "asm-generic/errno-base.h"
 #include "asm-generic/ioctl.h"
 #include "asm/current.h"
-#include "asm/io.h"
 #include "linux/capability.h"
 #include "linux/container_of.h"
 #include "linux/errno.h"
-#include "linux/list.h"
 #include "linux/printk.h"
 #include <linux/clockchips.h>
 #include <linux/clocksource.h>
@@ -16,8 +14,10 @@
 #include "../../qemu-devices/lux/include/hw.h"
 #include "linux/rbtree.h"
 #include "linux/slab.h"
+#include "linux/smp.h"
 #include "linux/spinlock.h"
 #include "linux/wait.h"
+#include "linux/workqueue.h"
 #include "lux.h"
 #include "lux_ioctl.h"
 
@@ -142,10 +142,9 @@ static inline int disable_async(struct lux_clock_subscriber *sub) {
 }
 
 void lux_reprogram_timer(struct lux_clock *lux_clock) {
-	// __u64 curr_phys_deadline = readq(lux_clock->base + REG_TIMER_CMP);
-	__u64 min_phys_deadline = ~0ULL;
 	struct lux_clock_subscriber *min_sub = NULL;
 
+	// 1. Get the nearest subscriber
 	struct rb_node *first = rb_first_cached(&lux_clock->subscribers);
 
 	if (!first) { // Tree is empty
@@ -155,13 +154,25 @@ void lux_reprogram_timer(struct lux_clock *lux_clock) {
 		wmb();
 		return;
 	}
-
-	// If tree is not empty, reprogram the timer to fire for the nearest
 	min_sub = rb_entry(first, struct lux_clock_subscriber, node);
-	min_phys_deadline = min_sub->deadline - min_sub->time_offset;
+
+	// 2. Make sure its deadline is in the future
+	// The deadline can be in the past for many reasons.
+	// One of them is if the process resets its virtual time and then
+	// resets its timers.
+	if (min_sub->deadline <= lux_timer_read_virtual_time(min_sub)) {
+		// Normall, work (bottom-half) is queued only from the hardirq (top-half).
+		// Here, we bypass the hardirq. This has the effect of assuming
+		// it has already fired.
+		// The hardirq will handle all expired timers and call this function again,
+		// so there's no need for a recursive call (it will come naturally from the work,
+		// albiet distributed and async, because queuing work is asynchronous).
+		queue_work_on(smp_processor_id(), lux_clock->workqueue, &lux_clock->timer_work);
+		return;
+	}
 
 	// Write the comparator value
-	writeq(min_phys_deadline, lux_clock->base + REG_TIMER_CMP);
+	writeq(min_sub->phys_deadline, lux_clock->base + REG_TIMER_CMP);
 	wmb();
 
 	// Make sure timer and interrupts are enabled
@@ -187,7 +198,7 @@ void lux_timer_enqueue(struct lux_clock_subscriber *new_sub) {
 		parent = *link;
 		parent_sub = rb_entry(parent, struct lux_clock_subscriber, node);
 
-		if (parent_sub->deadline < new_sub->deadline)
+		if (parent_sub->phys_deadline < new_sub->phys_deadline)
 			link = &parent->rb_left;
 		else {
 			link = &parent->rb_right;
@@ -307,7 +318,27 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 				return -EACCES;
 			if (get_user(user_time, (__u64 __user *)arg) < 0)
 				return -EFAULT;
+
+			spin_lock_bh(&lux_clock->subscribers_lock);
+
+			// Remove for two reasons:
+			// 1. We're modifying its physical time, so its deadline will likely change
+			// 2. We don't want the bottom-half to consider it while we're modifying it
+			bool was_in_tree = !RB_EMPTY_NODE(&sub->node);
+			if (was_in_tree) {
+				RB_CLEAR_NODE(&sub->node);
+				rb_erase_cached(&sub->node, rb_root);
+			}
+
 			lux_timer_set_time(sub, user_time);
+
+			if (was_in_tree)
+				// Reinsert at the new correct physical location
+				lux_timer_enqueue(sub);
+
+			lux_reprogram_timer(lux_clock);
+
+			spin_unlock_bh(&lux_clock->subscribers_lock);
 			break;
 
 		case LUX_ALM_RD:
@@ -342,6 +373,7 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			// Change deadline
 			raw_spin_lock_bh(&sub->irq_lock);
 			sub->deadline = time_now + user_delta;
+			sub->phys_deadline = sub->deadline - sub->time_offset;
 			raw_spin_unlock_bh(&sub->irq_lock);
 
 			// Reinsert (which rebalances the tree)
@@ -386,6 +418,7 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 			// Change deadline and delta
 			raw_spin_lock_bh(&sub->irq_lock);
 			sub->deadline = time_now + user_delta;
+			sub->phys_deadline = sub->deadline - sub->time_offset;
 			sub->periodic_delta = user_delta;
 			raw_spin_unlock_bh(&sub->irq_lock);
 

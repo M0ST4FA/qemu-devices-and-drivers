@@ -39,6 +39,7 @@ int lux_timer_release(struct inode *inode, struct file *filp);
 ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *offset);
 ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
 ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
+__poll_t lux_timer_poll(struct file *filp, struct poll_table_struct *poll_table);
 
 u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub);
 void lux_reprogram_timer(struct lux_clock *lux_clock);
@@ -51,6 +52,7 @@ static struct file_operations misc_fops = {
 	.read = lux_timer_read,
 	.write = lux_timer_write,
 	.unlocked_ioctl = lux_timer_ioctl,
+	.poll = lux_timer_poll,
 };
 
 // ------------- CLOCKEVENT -------------

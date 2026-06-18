@@ -8,6 +8,7 @@
 #include <linux/clockchips.h>
 #include <linux/clocksource.h>
 #include <linux/module.h>
+#include <linux/poll.h>
 #include <linux/sched_clock.h>
 #include <linux/types.h>
 
@@ -26,6 +27,7 @@ int lux_timer_release(struct inode *inode, struct file *filp);
 ssize_t lux_timer_read(struct file *filp, char __user *buf, size_t len, loff_t *offset);
 ssize_t lux_timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
 ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg);
+__poll_t lux_timer_poll(struct file *filp, struct poll_table_struct *poll_table);
 
 u64 lux_timer_read_virtual_time(struct lux_clock_subscriber *sub);
 void lux_reprogram_timer(struct lux_clock *lux_clock);
@@ -167,7 +169,7 @@ void lux_reprogram_timer(struct lux_clock *lux_clock) {
 		// The hardirq will handle all expired timers and call this function again,
 		// so there's no need for a recursive call (it will come naturally from the work,
 		// albiet distributed and async, because queuing work is asynchronous).
-		queue_work_on(smp_processor_id(), lux_clock->workqueue, &lux_clock->timer_work);
+		queue_work(lux_clock->workqueue, &lux_clock->timer_work);
 		return;
 	}
 
@@ -475,3 +477,23 @@ ssize_t lux_timer_ioctl(struct file *filp, unsigned cmd, unsigned long arg) {
 
 	return 0;
 }
+
+__poll_t lux_timer_poll(struct file *filp, struct poll_table_struct *poll_table) {
+	__poll_t mask = 0;
+	struct lux_clock_subscriber *sub = filp->private_data;
+
+	pr_info(LUX_TIMER_DRIVER_NAME ": [%d] Polling for descriptor...\n", current->pid);
+
+	poll_wait(filp, &sub->wait_queue, poll_table);
+
+	raw_spin_lock_bh(&sub->irq_lock);
+	if (sub->irq_data)
+		goto out;
+
+	mask |= (POLLIN | POLLRDNORM);
+
+out:
+	raw_spin_unlock_bh(&sub->irq_lock);
+
+	return mask;
+};

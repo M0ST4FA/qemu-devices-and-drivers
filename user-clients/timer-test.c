@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <sys/poll.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -59,6 +60,7 @@ static __u64 timer_test_time(int fd, int pid) {
 static int timer_test_alarm(int fd, int pid, __u64 alarm) {
 	__u64 overruns = 0;
 	__u64 now = 0;
+	int ret = 0;
 
 	// 1. Set alarm
 	if (ioctl(fd, LUX_ALM_SET, &alarm) < 0)
@@ -76,6 +78,14 @@ static int timer_test_alarm(int fd, int pid, __u64 alarm) {
 
 	// 4. Block for alarm
 	// sleep(2); // Accumulate overruns
+	struct pollfd pfd = {
+		.fd = fd,
+		.events = POLLIN | POLLRDNORM,
+	};
+	ret = poll(&pfd, 1, 2500);
+	if (ret < 0)
+		err(EXIT_FAILURE, "[%d] poll", pid);
+
 	if (read(fd, &overruns, sizeof(overruns)) < 0)
 		err(EXIT_FAILURE, "[%d] read", pid);
 	printf("[%d] Alarm fired! Overruns: %llu, cause: %s\n",
@@ -94,6 +104,7 @@ static int timer_test_alarm(int fd, int pid, __u64 alarm) {
 static int timer_test_alarm_periodic(int fd, int pid, __u64 alarm_delta) {
 	__u64 overruns = 0;
 	__u64 now = 0, alarm = 0;
+	int ret = 0;
 
 	// 1. Set periodic alarms
 	if (ioctl(fd, LUX_IRQP_SET, &alarm_delta) < 0)
@@ -104,6 +115,10 @@ static int timer_test_alarm_periodic(int fd, int pid, __u64 alarm_delta) {
 		err(EXIT_FAILURE, "[%d] ioctl LUX_PIE_ON", pid);
 
 	// 3. Wait for receiving alarm signal
+	struct pollfd pfd = {
+		.fd = fd,
+		.events = POLLIN | POLLRDNORM,
+	};
 	for (int i = 0; i < 4; i++) {
 		if (ioctl(fd, LUX_TIME_RD, &now) < 0)
 			err(EXIT_FAILURE, "[%d] ioctl LUX_TIME_RD", pid);
@@ -111,6 +126,10 @@ static int timer_test_alarm_periodic(int fd, int pid, __u64 alarm_delta) {
 
 		// 4. Figure out alarm cause and how many overruns
 		// sleep(2); // Accumulate overruns
+		ret = poll(&pfd, 1, 2500);
+		if (ret < 0)
+			err(EXIT_FAILURE, "[%d] poll", pid);
+
 		if (read(fd, &overruns, sizeof(overruns)) < 0)
 			err(EXIT_FAILURE, "[%d] read", pid);
 		printf("[%d] Periodic alarm fired! Overruns: %llu, cause: %llu\n",

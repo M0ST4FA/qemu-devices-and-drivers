@@ -1,10 +1,13 @@
+#include "asm/current.h"
 #include "linux/completion.h"
 #include "linux/container_of.h"
+#include "linux/delay.h"
 #include "linux/err.h"
 #include "linux/hrtimer_types.h"
 #include "linux/jiffies.h"
 #include "linux/ktime.h"
 #include "linux/printk.h"
+#include "linux/sched.h"
 #include "linux/time.h"
 #include "linux/timekeeping.h"
 #include "linux/types.h"
@@ -28,6 +31,8 @@ struct timer_data {
 
 	struct completion hr_fired;
 	struct completion tl_fired;
+
+	wait_queue_head_t wq;
 };
 
 static struct task_struct *kthread = NULL;
@@ -104,6 +109,7 @@ static void cancel_timers(struct timer_data *data) {
 	if (timer_pending(&data->tltimer))
 		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] tltimer is still pending...\n", current->pid);
 
+	pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Waiting for tltimer to expire and deleting it...\n", current->pid);
 	timer_delete_sync(&data->tltimer);
 }
 
@@ -143,6 +149,31 @@ static int lux_kthread_entry(void *arg) {
 
 		wait_for_completion(&data->tl_fired);
 		reinit_completion(&data->tl_fired);
+
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from waiting for tltimer...\n", current->pid);
+
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to sleep for 1 second...\n", current->pid);
+		msleep(1000);
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from 1 second sleep...\n", current->pid);
+
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to sleep for 2500 jiffies...\n", current->pid);
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule_timeout(2500);
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from 2500-jiffy sleep...\n", current->pid);
+
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to sleep for 3400-4000us...\n", current->pid);
+		usleep_range_idle(3400, 4000);
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from 3400-4000us sleep...\n", current->pid);
+
+		// pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to sleep for 2000ns...\n", current->pid);
+		// wait_event_hrtimeout(data->wq, true, 50000);
+		// pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from 2000ns sleep...\n", current->pid);
+
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to busy-wait...\n", current->pid);
+		ndelay(2000);
+		udelay(5000);
+		mdelay(20);
+		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from busy-waiting...\n", current->pid);
 	}
 
 	cancel_timers(data);
@@ -154,6 +185,7 @@ static int __init lux_kthread_time_init(void) {
 
 	init_completion(&data.hr_fired);
 	init_completion(&data.tl_fired);
+	init_waitqueue_head(&data.wq);
 
 	kthread = kthread_run(lux_kthread_entry, &data, "lux-kthread-time");
 	if (IS_ERR(kthread)) {

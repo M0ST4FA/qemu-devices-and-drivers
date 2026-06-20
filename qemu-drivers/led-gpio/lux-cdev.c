@@ -9,6 +9,9 @@
 #include "linux/fs.h"
 #include "linux/gfp_types.h"
 #include "linux/init.h"
+#include "linux/interrupt.h"
+#include "linux/irqdomain.h"
+#include "linux/irqreturn.h"
 #include "linux/mm.h"
 #include "linux/mm_types.h"
 #include "linux/pci.h"
@@ -16,6 +19,7 @@
 #include "linux/printk.h"
 #include "linux/slab.h"
 #include "linux/stddef.h"
+#include "linux/swait.h"
 #include "linux/types.h"
 #include "linux/uaccess.h"
 #include <linux/module.h>
@@ -25,25 +29,102 @@
 #include "lux_ioctl.h"
 
 struct class *lux_class;
+extern struct irq_domain *lux_global_irq_domain;
 
 struct lux_cdev {
 	struct lux_function *lux_function;
 	struct cdev cdev;
 	struct device *device;
 	dev_t cdev_id;
+
+	enum led_irq_cause last_irq_cause;
+	bool was_error;
+	struct swait_queue_head wq;
 };
 
-static int lux_smart_open(struct inode *inode, struct file *filp) {
-	struct lux_cdev *device = NULL;
+static irqreturn_t lux_smart_led_irq_handler(int virq, void *dev) {
+	struct lux_cdev *cdev = dev;
+	void __iomem *base = cdev->lux_function->bar[0];
+	cdev->last_irq_cause = readl(base + REG_LED_IRQ_CAUSE);
+	cdev->was_error = false;
 
+	pr_debug(LUX_CHAR_DRIVER_NAME ": LED irq occured: %s\n",
+			 led_irq_cause_names[cdev->last_irq_cause]);
+
+	swake_up_all(&cdev->wq);
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t lux_smart_led_err_irq_handler(int virq, void *dev) {
+	struct lux_cdev *cdev = dev;
+	void __iomem *base = cdev->lux_function->bar[0];
+	cdev->last_irq_cause = readl(base + REG_LED_IRQ_CAUSE);
+	cdev->was_error = true;
+
+	pr_debug(LUX_CHAR_DRIVER_NAME ": LED error occured: %s\n",
+			 led_irq_cause_names[cdev->last_irq_cause]);
+
+	swake_up_all(&cdev->wq);
+
+	return IRQ_HANDLED;
+}
+
+static int lux_smart_open(struct inode *inode, struct file *filp) {
+	int ret = 0;
+	struct lux_cdev *device = NULL;
 	device = container_of(inode->i_cdev, struct lux_cdev, cdev);
+
+	void __iomem *base = device->lux_function->bar[0];
 
 	filp->private_data = device;
 
-	return 0;
+	if (!lux_global_irq_domain)
+		return -EAGAIN; // Try again later
+
+	int virq = irq_find_mapping(lux_global_irq_domain, HWIRQ_LED);
+	int virq_err = irq_find_mapping(lux_global_irq_domain, HWIRQ_LED_ERR);
+
+	if (!virq || !virq_err) {
+		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to request virq for LED (%d) or its errors (%d)\n", virq, virq_err);
+		return -EBUSY;
+	}
+
+	ret = request_irq(virq, lux_smart_led_irq_handler,
+					  IRQF_NO_THREAD, "lux-led", device);
+	if (ret < 0) {
+		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to setup the LED irq handler\n");
+		return ret;
+	}
+
+	ret = request_irq(virq_err, lux_smart_led_err_irq_handler,
+					  IRQF_NO_THREAD, "lux-led-err", device);
+	if (ret < 0) {
+		free_irq(virq, device);
+		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to setup the LED error irq handler\n");
+		return ret;
+	}
+
+	writel(LED_CTRL_IRQ_EN, base + REG_LED_CTRL);
+
+	return ret;
 }
 
 static int lux_smart_release(struct inode *inode, struct file *filp) {
+	struct lux_cdev *device = NULL;
+	device = container_of(inode->i_cdev, struct lux_cdev, cdev);
+
+	void __iomem *base = device->lux_function->bar[0];
+
+	filp->private_data = device;
+
+	int virq = irq_find_mapping(lux_global_irq_domain, HWIRQ_LED);
+	int virq_err = irq_find_mapping(lux_global_irq_domain, HWIRQ_LED_ERR);
+
+	free_irq(virq, device);
+	free_irq(virq_err, device);
+
+	writel(0, base + REG_LED_CTRL);
 
 	return 0;
 }
@@ -68,6 +149,19 @@ static ssize_t lux_smart_write(struct file *filp, const char *buf,
 	void *led_base = device->lux_function->bar[1] + led_id * sizeof(struct smart_led);
 
 	writeq(*(uint64_t *)&led, led_base);
+
+	int wait_ret = swait_event_interruptible_exclusive(device->wq, READ_ONCE(device->last_irq_cause));
+	if (wait_ret != 0) { // Usually -ERESTARTSYS; this condition is important to not break signal handling
+		device->last_irq_cause = 0;
+		return wait_ret;
+	}
+
+	if (device->last_irq_cause & LUX_IRQ_LED_ERR_UNKNOWN_CMD) {
+		pr_err(LUX_CHAR_DRIVER_NAME ": Sent invalid command to LED\n");
+		count = -EINVAL;
+	}
+
+	device->last_irq_cause = 0; // Reset wait condition
 
 	*offset += sizeof(struct smart_led);
 
@@ -195,10 +289,14 @@ static int lux_driver_cdev_probe(struct platform_device *platdev) {
 	struct device *parent_dev = platdev->dev.parent;
 	struct lux_function *lux_function = dev_get_drvdata(parent_dev);
 
+	if (lux_function->dev_id != LUX_F0_DEV_ID)
+		return -ENODEV;
+
 	// 1. Allocate private data
 	struct lux_cdev *lux_cdev = kzalloc(sizeof(struct lux_cdev), GFP_KERNEL);
 	if (lux_cdev == NULL)
 		return -ENOMEM;
+	init_swait_queue_head(&lux_cdev->wq);
 
 	ret = alloc_chrdev_region(&lux_cdev->cdev_id, 0, 1, LUX_CHAR_DRIVER_NAME);
 	if (ret < 0) {
@@ -215,6 +313,8 @@ static int lux_driver_cdev_probe(struct platform_device *platdev) {
 		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to add cdev to VFS");
 		goto cleanup;
 	}
+
+	cdev_added = true;
 
 	// 3. Register with sysfs and Device Driver Model
 	lux_cdev->device = device_create(lux_class, NULL,
@@ -243,6 +343,7 @@ cleanup:
 	if (cdev_added)
 		cdev_del(&lux_cdev->cdev);
 
+	kfree(lux_cdev);
 	return ret;
 }
 
@@ -258,6 +359,7 @@ static void lux_driver_cdev_remove([[maybe_unused]] struct platform_device *plat
 	lux_cdev->cdev_id = 0;
 
 	cdev_del(&lux_cdev->cdev);
+	kfree(lux_cdev);
 }
 
 static struct platform_driver lux_cdev_platdev_driver = {
@@ -297,14 +399,13 @@ cleanup:
 }
 
 static void __exit lux_cdev_exit(void) {
+	platform_driver_unregister(&lux_cdev_platdev_driver);
 
 	// This MUST come later after devices have been removed
 	if (!IS_ERR_OR_NULL(lux_class)) {
 		class_destroy(lux_class);
 		lux_class = NULL;
 	}
-
-	platform_driver_unregister(&lux_cdev_platdev_driver);
 }
 
 module_init(lux_cdev_init);

@@ -70,9 +70,10 @@ static const char *led_ctrl_names[] = {
 };
 
 [[maybe_unused]]
-static const char *led_irq_cause[] = {
+static const char *led_irq_cause_names[] = {
 	[LUX_IRQ_LED_ON] = "LED_ON",
-	[LUX_IRQ_LED_COLOR] = "LED_OFF",
+	[LUX_IRQ_LED_OFF] = "LED_OFF",
+	[LUX_IRQ_LED_COLOR] = "LED_COLOR",
 	[LUX_IRQ_LED_ERR_UNKNOWN_CMD] = "LED_ERR_UNKNOWN_CMD",
 };
 

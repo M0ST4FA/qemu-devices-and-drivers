@@ -1,5 +1,6 @@
 #include "linux/bitops.h"
 #include "linux/err.h"
+#include "linux/export.h"
 #include "linux/irq.h"
 #include "linux/irqchip/chained_irq.h"
 #include "linux/irqdesc.h"
@@ -22,6 +23,8 @@ struct lux_irq_chip {
 	uint num_irqs;
 	uint virqs[HWIRQ_COUNT];
 };
+struct irq_domain *lux_global_irq_domain;
+EXPORT_SYMBOL_GPL(lux_global_irq_domain);
 
 static void lux_irq_mask(struct irq_data *data) {
 	struct lux_irq_chip *lux_chip = irq_data_get_irq_chip_data(data);
@@ -58,7 +61,7 @@ static int lux_irq_domain_map(struct irq_domain *d, uint virq, irq_hw_number_t h
 	struct lux_irq_chip *lux_chip = d->host_data;
 
 	// NOTE: You may want to use `handle_level_irq` flow handler instead
-	irq_set_chip_and_handler(virq, &lux_irq_chip, handle_edge_irq);
+	irq_set_chip_and_handler(virq, &lux_irq_chip, handle_level_irq);
 	irq_set_chip_data(virq, lux_chip);
 
 	return 0;
@@ -170,6 +173,7 @@ static int lux_driver_irq_probe(struct platform_device *platdev) {
 	}
 	lux_chip->irq_domain = lux_irq_domain;
 	lux_function->irq_domain = lux_irq_domain;
+	lux_global_irq_domain = lux_irq_domain;
 
 	// 4. Map hwirqs from our chip to virqs through the domain
 	if (create_hwirq_virq_mappings(lux_chip) < 0) {
@@ -191,6 +195,7 @@ static void lux_driver_irq_remove(struct platform_device *platdev) {
 
 	// Prevent interrupts registration of other interrupts using this domain
 	lux_function->irq_domain = NULL;
+	lux_global_irq_domain = NULL;
 
 	writel(0x0ULL, lux_chip->base + REG_IRQ_MASK);
 	wmb();

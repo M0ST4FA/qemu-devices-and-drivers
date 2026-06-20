@@ -176,7 +176,7 @@ int device_init(struct lux_silicon *restrict device, const char *f0_sock_path, c
 		goto cleanup;
 
 	// 4. Setup interrupts
-	ret = device_setup_irqs(device->f1_ctx, HWIRQ_COUNT);
+	ret = device_setup_irqs(device->f1_ctx, 1);
 	if (ret < 0) {
 		goto cleanup;
 	}

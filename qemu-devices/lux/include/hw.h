@@ -14,8 +14,6 @@
 #define F0_BAR0_REGION_SIZE 4096
 #define F0_BAR1_REGION_SIZE 4096
 #define F1_BAR0_REGION_SIZE 4096
-#define LUX_DIRECTION_OUT 1
-#define LUX_DIRECTION_IN 0
 
 #define MAX_DMA_REGIONS 1024
 
@@ -23,12 +21,30 @@
 #define VERSION (0x1)
 
 enum f0_bar0_regs {
-	REG_MAGIC = 0x00,	  // 4 bytes
-	REG_VERSION = 0x04,	  // 4 bytes
-	REG_DIRECTION = 0x08, // 8 bytes
-	REG_DATA = 0x10,	  // 8 bytes
-	REG_SET = 0x18,		  // 8 bytes
-	REG_CLR = 0x20,		  // 8 bytes
+	REG_MAGIC = 0x00,		  // 4 bytes
+	REG_VERSION = 0x04,		  // 4 bytes
+	REG_DIRECTION = 0x08,	  // 8 bytes
+	REG_DATA = 0x10,		  // 8 bytes
+	REG_SET = 0x18,			  // 8 bytes
+	REG_CLR = 0x20,			  // 8 bytes
+	REG_LED_CTRL = 0x28,	  // 4 bytes
+	REG_LED_IRQ_CAUSE = 0x2c, // 4 bytes
+};
+
+enum led_direction {
+	LUX_DIRECTION_OUT = 1,
+	LUX_DIRECTION_IN = 0,
+};
+
+enum led_ctrl {
+	LED_CTRL_IRQ_EN = (1 << 0),
+};
+
+enum led_irq_cause {
+	LUX_IRQ_LED_ON = (1 << 0),
+	LUX_IRQ_LED_OFF = (1 << 1),
+	LUX_IRQ_LED_COLOR = (1 << 2),
+	LUX_IRQ_LED_ERR_UNKNOWN_CMD = (1 << 3),
 };
 
 [[maybe_unused]]
@@ -39,6 +55,25 @@ static const char *f0_reg_names[] = {
 	[REG_DATA] = "REG_DATA",
 	[REG_SET] = "REG_SET",
 	[REG_CLR] = "REG_CLR",
+	[REG_LED_CTRL] = "REG_LED_CTRL",
+	[REG_LED_IRQ_CAUSE] = "REG_LED_IRQ_CAUSE",
+};
+
+[[maybe_unused]]
+static const char *led_direction_names[] = {
+	[LUX_DIRECTION_OUT] = "DIRECTION_OUT",
+	[LUX_DIRECTION_IN] = "DIRECTION_IN",
+};
+
+static const char *led_ctrl_names[] = {
+	[LED_CTRL_IRQ_EN] = "IRQ_EN",
+};
+
+[[maybe_unused]]
+static const char *led_irq_cause[] = {
+	[LUX_IRQ_LED_ON] = "LED_ON",
+	[LUX_IRQ_LED_COLOR] = "LED_OFF",
+	[LUX_IRQ_LED_ERR_UNKNOWN_CMD] = "LED_ERR_UNKNOWN_CMD",
 };
 
 struct [[gnu::packed]] smart_led {
@@ -82,12 +117,16 @@ static const char *f1_reg_names[] = {
 // Here, we announce assignments through this enum
 enum hwirqs {
 	HWIRQ_TIMER = 0,
+	HWIRQ_LED = 1,
+	HWIRQ_LED_ERR = 2,
 	HWIRQ_COUNT, // Number of assigned pins (NOTE: pins must be contiguous; driver relies on that for mapping to virqs.)
 };
 
 [[maybe_unused]]
 static const char *hwirq_names[] = {
 	[HWIRQ_TIMER] = "TIMER_IRQ",
+	[HWIRQ_LED] = "LED_IRQ",
+	[HWIRQ_LED_ERR] = "LED_ERR_IRQ",
 };
 
 #define TIMER_BIT (1ULL << 0)

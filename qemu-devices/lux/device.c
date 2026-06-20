@@ -176,7 +176,7 @@ int device_init(struct lux_silicon *restrict device, const char *f0_sock_path, c
 		goto cleanup;
 
 	// 4. Setup interrupts
-	ret = device_setup_irqs(device->f1_ctx, 1);
+	ret = device_setup_irqs(device->f1_ctx, HWIRQ_COUNT);
 	if (ret < 0) {
 		goto cleanup;
 	}
@@ -303,7 +303,7 @@ int device_handle_vfu_events(vfu_ctx_t *restrict ctx, struct pollfd *pfd, const 
 	return 0;
 };
 
-inline int device_run_eventloop(struct lux_silicon *device) {
+int device_run_eventloop(struct lux_silicon *device) {
 	int ret, timeout = -1;
 
 	if (vfu_attach_ctx(device->f0_ctx) < 0) {
@@ -333,7 +333,7 @@ inline int device_run_eventloop(struct lux_silicon *device) {
 		},
 		(struct pollfd){
 			.fd = device->f0_sock_fd,
-			.events = POLLIN,
+			.events = POLLIN | POLLRDNORM,
 			.revents = 0,
 		},
 	};
@@ -368,6 +368,9 @@ inline int device_run_eventloop(struct lux_silicon *device) {
 			pr_log("error", "LED device disconnected. Shutting down GPIO server...");
 			return 0; // Not a vfu error, so main() should not treat it as an error state
 		}
+		if (fds[2].revents & (POLLOUT | POLLRDNORM))
+			if (device_handle_led_protocol_events(device) < 0)
+				pr_log("error", "Error during handling LED event...");
 	}
 
 	return 0;

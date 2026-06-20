@@ -37,6 +37,19 @@ static inline ssize_t f0_bar0_read(struct lux_silicon *device,
 			memcpy(buf, &led_states, 8);
 			break;
 
+		case REG_LED_CTRL:
+			if (count != 4)
+				return -1;
+			*(uint32_t *)buf = device->led_ctrl;
+			break;
+
+		case REG_LED_IRQ_CAUSE:
+			if (count != 4)
+				return -1;
+			*(uint32_t *)buf = device->led_irq_cause;
+			device->led_irq_cause = 0; // Clear on read
+			break;
+
 			// WO registers
 		case REG_SET:
 		case REG_CLR:
@@ -62,6 +75,7 @@ static inline ssize_t f0_bar0_write(struct lux_silicon *device,
 		// RO registers
 		case REG_MAGIC:
 		case REG_VERSION:
+		case REG_LED_IRQ_CAUSE:
 			return -1;
 
 		case REG_DIRECTION:
@@ -111,6 +125,12 @@ static inline ssize_t f0_bar0_write(struct lux_silicon *device,
 
 				device_clr_led_states(device, to_clr);
 			}
+			break;
+
+		case REG_LED_CTRL:
+			if (count != 4)
+				return -1;
+			device->led_ctrl = *(uint32_t *)buf;
 			break;
 
 		default:

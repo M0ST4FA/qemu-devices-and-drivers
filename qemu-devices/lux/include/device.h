@@ -23,6 +23,8 @@ struct lux_silicon {
 			 * 1 bit per LED.
 			 * */
 			uint64_t direction;
+			uint32_t led_ctrl;
+			uint32_t led_irq_cause;		   // IRQ cause or error
 			struct smart_led leds[LED_NR]; // Full LED state (LED register file)
 		};
 	};
@@ -66,6 +68,7 @@ int device_set_led_color(struct lux_silicon *restrict device,
 						 int32_t led_id, uint8_t color[4]);
 int device_get_led_color(struct lux_silicon *restrict device,
 						 int32_t led_id, uint64_t *color);
+int device_handle_led_protocol_events(struct lux_silicon *restrict device);
 
 // TIMER
 

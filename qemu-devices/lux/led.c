@@ -1,6 +1,9 @@
 #include <asm-generic/errno.h>
+#include <assert.h>
+#include <err.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
@@ -153,3 +156,53 @@ int device_get_led_color(struct lux_silicon *restrict device,
 
 	return 0;
 }
+
+int device_handle_led_protocol_events(struct lux_silicon *restrict device) {
+	int fd = device->f0_sock_fd;
+	struct led_event ev = {0};
+	int n = read(fd, &ev, sizeof(ev));
+
+	if (n < 0) {
+		pr_log_libcerror(errno, "read: Couldn't read LED event");
+		return -1;
+	}
+
+	if (n != sizeof(ev)) {
+		pr_log("error", "Failed to read LED event...read only part of it");
+		return -1;
+	}
+
+	switch (ev.ev) {
+		case LEV_ON:
+			device->led_irq_cause |= LUX_IRQ_LED_ON;
+			break;
+
+		case LEV_OFF:
+			device->led_irq_cause |= LUX_IRQ_LED_OFF;
+			break;
+
+		case LEV_COLOR:
+			device->led_irq_cause |= LUX_IRQ_LED_COLOR;
+			break;
+
+		case LEV_ERR:
+			switch (ev.error_code) {
+				case LERR_UNKNOWN_CMD:
+					device->led_irq_cause |= LUX_IRQ_LED_ERR_UNKNOWN_CMD;
+					break;
+			}
+			break;
+
+		default:
+			errx(EXIT_FAILURE, "Unhandled LED event\n");
+	}
+
+	if (device->led_ctrl & LED_CTRL_IRQ_EN) {
+		if (ev.ev != LEV_ERR)
+			device->irq_status |= (1 << HWIRQ_LED);
+		else
+			device->irq_status |= (1 << HWIRQ_LED_ERR);
+	}
+
+	return 0;
+};

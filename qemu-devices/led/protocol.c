@@ -98,7 +98,8 @@ int protocol_accept_connection(struct protocol_state *protocol_state) {
 int protocol_handle_command([[maybe_unused]] struct protocol_state *protocol_state,
 							struct led_grid *led_grid,
 							struct pollfd *fd) {
-	struct led_command cmd;
+	struct led_command cmd = {0};
+	struct led_event ev = {0};
 	struct led *led = NULL;
 	int n = read(fd->fd, &cmd, sizeof(cmd));
 
@@ -144,27 +145,38 @@ int protocol_handle_command([[maybe_unused]] struct protocol_state *protocol_sta
 		return -1;
 	}
 
+	ev.led_id = cmd.led_id;
+
 	switch (cmd.cmd) {
 		case CMD_TOGGLE:
 			led->on = !led->on;
+			ev.ev = led->on ? LEV_ON : LEV_OFF;
 			break;
 
 		case CMD_ON:
 			led->on = 1;
+			ev.ev = LEV_ON;
 			break;
 
 		case CMD_OFF:
 			led->on = 0;
+			ev.ev = LEV_OFF;
 			break;
 
 		case CMD_SET_COLOR:
 			memcpy(led->color, cmd.color, sizeof(led->color));
+			ev.ev = LEV_COLOR;
 			break;
 
 		default:
 			pr_log("error", "Unkown command <%d>", cmd.cmd);
+			ev.ev = LEV_ERR;
+			ev.error_code = LERR_UNKNOWN_CMD;
 			return -1;
 	}
+
+	if (write(fd->fd, &ev, sizeof(ev)) != sizeof(ev))
+		pr_log("error", "Failed to send event");
 
 	const char *cmd_to_str[] = {
 		[CMD_SET_COLOR] = "CMD_SET_COLOR",
@@ -172,8 +184,16 @@ int protocol_handle_command([[maybe_unused]] struct protocol_state *protocol_sta
 		[CMD_OFF] = "CMD_OFF",
 		[CMD_TOGGLE] = "CMD_TOGGLE",
 	};
+	const char *ev_to_str[] = {
+		[LEV_ON] = "LEV_ON",
+		[LEV_OFF] = "LEV_OFF",
+		[LEV_COLOR] = "LEV_COLOR",
+		[LEV_ERR] = "LEV_ERR",
+	};
 
 	pr_log("debug", "Received command: CMD %s, LED ID %d", cmd_to_str[cmd.cmd], cmd.led_id);
+	pr_log("debug", "Sent event: EV %s, LED ID %d, ERR: %d",
+		   ev_to_str[ev.ev], ev.led_id, ev.error_code);
 
 	return 0;
 }

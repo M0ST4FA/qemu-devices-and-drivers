@@ -1,5 +1,4 @@
 #include "asm/current.h"
-#include "linux/completion.h"
 #include "linux/container_of.h"
 #include "linux/delay.h"
 #include "linux/err.h"
@@ -29,9 +28,8 @@ struct timer_data {
 
 	ktime_t tl_deadline;
 
-	struct completion hr_fired;
-	struct completion tl_fired;
-
+	bool hr_fired;
+	bool tl_fired;
 	wait_queue_head_t wq;
 };
 
@@ -51,7 +49,8 @@ static enum hrtimer_restart lux_kthread_hrtimer_function(struct hrtimer *t) {
 	data->hr_deadline = ktime_add_ms(data->hr_deadline,
 									 3000 + get_random_u64() % 500);
 
-	complete_all(&data->hr_fired);
+	data->hr_fired = true;
+	wake_up(&data->wq);
 
 	// u64 overruns = hrtimer_forward(t, ktime_get(), data->hr_interval);
 	hrtimer_set_expires(t, data->hr_deadline);
@@ -69,7 +68,9 @@ static void lux_kthread_tltimer_function(struct timer_list *t) {
 
 	pr_info(LUX_KTHREAD_TIME_NAME ": tltimer fired! Current jiffies: %llu, diff: (%lld jiffies, %lldms)\n",
 			curr_jiffies, diff_jiffies, diff_ms);
-	complete_all(&data->tl_fired);
+
+	data->tl_fired = true;
+	wake_up(&data->wq);
 }
 
 static void setup_timers(struct timer_data *data) {
@@ -121,36 +122,37 @@ static int lux_kthread_entry(void *arg) {
 	while (!kthread_should_stop()) {
 		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Kernel thread running...\n", current->pid);
 
-		if (!hrtimer_active(&data->hrtimer)) {
-			data->hr_deadline = ktime_get();
-			data->hr_deadline = ktime_add_ms(data->hr_deadline,
-											 3000 + get_random_u64() % 500);
+		wait_event(data->wq, data->hr_fired || data->tl_fired || kthread_should_stop());
 
-			hrtimer_start(&data->hrtimer, data->hr_deadline, HRTIMER_MODE_ABS);
-			pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Restarted hrtimer. Resolution: %uns\n", current->pid, hrtimer_resolution);
-			pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to wait for %llums...\n",
-					current->pid, ktime_to_ms(data->hr_deadline));
+		if (data->hr_fired) {
+			data->hr_fired = false;
+			pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from waiting for hrtimer...\n", current->pid);
+
+			if (!hrtimer_active(&data->hrtimer)) {
+				data->hr_deadline = ktime_get();
+				data->hr_deadline = ktime_add_ms(data->hr_deadline,
+												 3000 + get_random_u64() % 500);
+
+				hrtimer_start(&data->hrtimer, data->hr_deadline, HRTIMER_MODE_ABS);
+				pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Restarted hrtimer. Resolution: %uns\n", current->pid, hrtimer_resolution);
+				pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to wait for %llums...\n",
+						current->pid, ktime_to_ms(data->hr_deadline));
+			}
 		}
 
-		if (!timer_pending(&data->tltimer)) {
-			typeof(jiffies) tl_deadline = jiffies + secs_to_jiffies(2) + msecs_to_jiffies(get_random_u64() % 5000);
-			data->tl_deadline = tl_deadline;
+		if (data->tl_fired) {
+			pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from waiting for tltimer...\n", current->pid);
 
-			mod_timer(&data->tltimer, data->tl_deadline);
-			pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Restarted tltimer\n", current->pid);
-			pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to wait until jiffies = %llu...\n",
-					current->pid, data->tl_deadline);
+			if (!timer_pending(&data->tltimer)) {
+				typeof(jiffies) tl_deadline = jiffies + secs_to_jiffies(2) + msecs_to_jiffies(get_random_u64() % 5000);
+				data->tl_deadline = tl_deadline;
+
+				mod_timer(&data->tltimer, data->tl_deadline);
+				pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Restarted tltimer\n", current->pid);
+				pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to wait until jiffies = %llu...\n",
+						current->pid, data->tl_deadline);
+			}
 		}
-
-		wait_for_completion(&data->hr_fired);
-		reinit_completion(&data->hr_fired);
-
-		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from waiting for hrtimer...\n", current->pid);
-
-		wait_for_completion(&data->tl_fired);
-		reinit_completion(&data->tl_fired);
-
-		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] Returned from waiting for tltimer...\n", current->pid);
 
 		pr_info(LUX_KTHREAD_TIME_NAME ": [%d] About to sleep for 1 second...\n", current->pid);
 		msleep(1000);
@@ -183,8 +185,6 @@ static int lux_kthread_entry(void *arg) {
 
 static int __init lux_kthread_time_init(void) {
 
-	init_completion(&data.hr_fired);
-	init_completion(&data.tl_fired);
 	init_waitqueue_head(&data.wq);
 
 	kthread = kthread_run(lux_kthread_entry, &data, "lux-kthread-time");

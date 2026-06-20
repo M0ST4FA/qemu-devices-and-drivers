@@ -14,6 +14,17 @@ enum cmd : uint8_t {
 	CMD_SET_COLOR = (1 << 3),
 };
 
+enum event_type : uint8_t {
+	LEV_ON = (1 << 0),	  // LED state became ON
+	LEV_OFF = (1 << 1),	  // LED state became OFF
+	LEV_COLOR = (1 << 2), // LED potentially changed color
+	LEV_ERR = (1 << 3),	  // Error occured
+};
+
+enum led_err : uint16_t {
+	LERR_UNKNOWN_CMD = (1 << 0),
+};
+
 // Note: only the commad to set color needs data
 struct [[gnu::packed]] led_command {
 	enum cmd cmd;
@@ -21,6 +32,11 @@ struct [[gnu::packed]] led_command {
 	union {
 		uint8_t color[4];
 	};
+};
+struct [[gnu::packed]] led_event {
+	enum event_type ev;
+	enum led_err error_code;
+	int32_t led_id;
 };
 
 struct protocol_state {

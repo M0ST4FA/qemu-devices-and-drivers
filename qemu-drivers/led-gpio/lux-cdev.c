@@ -48,8 +48,8 @@ static irqreturn_t lux_smart_led_irq_handler(int virq, void *dev) {
 	cdev->last_irq_cause = readl(base + REG_LED_IRQ_CAUSE);
 	cdev->was_error = false;
 
-	pr_debug(LUX_CHAR_DRIVER_NAME ": LED irq occured: %s\n",
-			 led_irq_cause_names[cdev->last_irq_cause]);
+	pr_info(LUX_CHAR_DRIVER_NAME ": LED irq occured: %s\n",
+			led_irq_cause_names[cdev->last_irq_cause]);
 
 	swake_up_all(&cdev->wq);
 
@@ -62,8 +62,8 @@ static irqreturn_t lux_smart_led_err_irq_handler(int virq, void *dev) {
 	cdev->last_irq_cause = readl(base + REG_LED_IRQ_CAUSE);
 	cdev->was_error = true;
 
-	pr_debug(LUX_CHAR_DRIVER_NAME ": LED error occured: %s\n",
-			 led_irq_cause_names[cdev->last_irq_cause]);
+	pr_info(LUX_CHAR_DRIVER_NAME ": LED error occured: %s\n",
+			led_irq_cause_names[cdev->last_irq_cause]);
 
 	swake_up_all(&cdev->wq);
 

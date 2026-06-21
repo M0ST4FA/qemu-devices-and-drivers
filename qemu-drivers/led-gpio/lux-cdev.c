@@ -39,7 +39,7 @@ struct lux_cdev {
 
 	enum led_irq_cause last_irq_cause;
 	bool was_error;
-	struct swait_queue_head wq;
+	wait_queue_head_t wq;
 };
 
 static irqreturn_t lux_smart_led_irq_handler(int virq, void *dev) {
@@ -51,7 +51,7 @@ static irqreturn_t lux_smart_led_irq_handler(int virq, void *dev) {
 	pr_info(LUX_CHAR_DRIVER_NAME ": LED irq occured: %s\n",
 			led_irq_cause_names[cdev->last_irq_cause]);
 
-	swake_up_all(&cdev->wq);
+	wake_up_interruptible(&cdev->wq);
 
 	return IRQ_HANDLED;
 }
@@ -65,7 +65,7 @@ static irqreturn_t lux_smart_led_err_irq_handler(int virq, void *dev) {
 	pr_info(LUX_CHAR_DRIVER_NAME ": LED error occured: %s\n",
 			led_irq_cause_names[cdev->last_irq_cause]);
 
-	swake_up_all(&cdev->wq);
+	wake_up_interruptible(&cdev->wq);
 
 	return IRQ_HANDLED;
 }
@@ -150,7 +150,7 @@ static ssize_t lux_smart_write(struct file *filp, const char *buf,
 
 	writeq(*(uint64_t *)&led, led_base);
 
-	int wait_ret = swait_event_interruptible_exclusive(device->wq, READ_ONCE(device->last_irq_cause));
+	int wait_ret = wait_event_interruptible(device->wq, READ_ONCE(device->last_irq_cause));
 	if (wait_ret != 0) { // Usually -ERESTARTSYS; this condition is important to not break signal handling
 		device->last_irq_cause = 0;
 		return wait_ret;
@@ -193,29 +193,82 @@ static ssize_t lux_smart_read(struct file *filp, char *buf,
 	return count;
 }
 
-static int lux_smart_mmap(struct file *filp, struct vm_area_struct *vma) {
-	int ret = 0;
-	struct lux_cdev *lux_cdev = filp->private_data;
-	int len = vma->vm_end - vma->vm_start;
+// Invoked when VMA is duplicated or mapped
+static void lux_vma_open(struct vm_area_struct *vma) {
+	pr_info(LUX_CHAR_DRIVER_NAME ": VM area mapped to user space process opened...\n");
+}
 
-	// 1. Get physical memory of BAR 1 (memory region of smart LEDs)
-	resource_size_t led_iomem_phys = pci_resource_start(lux_cdev->lux_function->pdev, 1);
-	if (!led_iomem_phys)
-		return -ENODEV;
+// Invoked when unmapped
+static void lux_vma_close(struct vm_area_struct *vma) {
+	pr_info(LUX_CHAR_DRIVER_NAME ": VM area mapped to user space process closed..\n");
+}
 
-	// 2. Set correct protection attributes of pages and perform the mapping
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-	ret = io_remap_pfn_range(vma, vma->vm_start,
-							 PHYS_PFN(led_iomem_phys),
-							 len,
-							 vma->vm_page_prot);
-	if (ret < 0) {
-		pr_err(LUX_CHAR_DRIVER_NAME ": Failed to map physical address to proccess memory area (err: %d)", ret);
-		return ret;
+// Invoked to get name (e.g. for /proc/ files)
+static const char *lux_vma_name(struct vm_area_struct *vma) {
+	return "lux-led";
+}
+
+// Invoked by page fault exception handler
+static vm_fault_t lux_vma_fault(struct vm_fault *vmf) {
+	// We're trying to do real demand paging instead of just delaying the mapping
+	// the entire page range. That's why we're working with offsets and eventually
+	// mapping a single pfn instead of a pfn_range.
+
+	struct vm_area_struct *vma = vmf->vma;
+	struct lux_cdev *lux_cdev = vma->vm_private_data;
+	size_t bar_len = pci_resource_len(lux_cdev->lux_function->pdev, 1);
+
+	// 1. Convert page offset into a byte offset
+	off_t offset = vmf->pgoff << PAGE_SHIFT;
+
+	// 2. Ensure the fault is within bounds of bar
+	if (offset >= bar_len) {
+		pr_err(LUX_CHAR_DRIVER_NAME ": Trying to map memory after the BAR (offset: %lu, bar len: %lu)...\n",
+			   offset, bar_len);
+		return VM_FAULT_SIGBUS;
 	}
 
-	pr_info(LUX_CHAR_DRIVER_NAME ": Mapped virtual memory (addr: 0x%lx) of proc (PID: %d) to physical memory (addr: 0x%llx)\n",
+	// 3. Get physical memory of BAR 1 (memory region of smart LEDs)
+	resource_size_t led_iomem_phys = pci_resource_start(lux_cdev->lux_function->pdev, 1);
+	if (!led_iomem_phys)
+		return VM_FAULT_SIGBUS;
+
+	// 4. Add the offset to get the exact physical address
+	led_iomem_phys += offset;
+
+	// 5. Perform the mapping
+	pr_info(LUX_CHAR_DRIVER_NAME ": Mapping virtual memory (addr: 0x%lx) of proc (PID: %d) to physical memory (addr: 0x%llx)\n",
 			vma->vm_start, current->pid, led_iomem_phys);
+
+	return vmf_insert_pfn(vma, vmf->address, PHYS_PFN(led_iomem_phys));
+
+	// This would map a pfn_range instead of the single pfn (physical page)
+	// ret = io_remap_pfn_range(vma, vma->vm_start,
+	// 						 PHYS_PFN(led_iomem_phys),
+	// 						 len,
+	// 						 vma->vm_page_prot);
+	// if (ret < 0) {
+	// 	pr_err(LUX_CHAR_DRIVER_NAME ": Failed to map physical address to proccess memory area (err: %d)", ret);
+	// 	return ret;
+	// }
+	//
+	// return VM_FAULT_COMPLETED;
+}
+
+static struct vm_operations_struct lux_vm_ops = {
+	.open = lux_vma_open,
+	.close = lux_vma_close,
+	.name = lux_vma_name,
+	.fault = lux_vma_fault,
+};
+
+static int lux_smart_mmap(struct file *filp, struct vm_area_struct *vma) {
+
+	// Setup demand paging
+	vma->vm_private_data = filp->private_data;
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	vm_flags_set(vma, VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP);
+	vma->vm_ops = &lux_vm_ops;
 
 	return 0;
 }
@@ -296,7 +349,7 @@ static int lux_driver_cdev_probe(struct platform_device *platdev) {
 	struct lux_cdev *lux_cdev = kzalloc(sizeof(struct lux_cdev), GFP_KERNEL);
 	if (lux_cdev == NULL)
 		return -ENOMEM;
-	init_swait_queue_head(&lux_cdev->wq);
+	init_waitqueue_head(&lux_cdev->wq);
 
 	ret = alloc_chrdev_region(&lux_cdev->cdev_id, 0, 1, LUX_CHAR_DRIVER_NAME);
 	if (ret < 0) {
